@@ -1251,7 +1251,11 @@ Added on 2026-11-20:
      the agent is in the room again (a new invite was joined, or a room
      was forgotten without leaving), it goes at once, and the room gets a
      new record with a new key; while the agent is still leaving it
-     stays. Rejoining the same room URI thus starts an empty chat.
+     stays. Rejoining the same room URI thus starts an empty chat. For a
+     one-to-one room the agent is active in, `Store::open_direct` clears
+     the tombstone before that sync does and makes the record itself, so
+     writing to the other user reopens the room (§7.29, bead
+     mimid-6vsk).
    - The JMAP front end's `Chat/set` destroy leaves the room, destroys
      the Chat (crate-jmap destroys its ReadPositions), forgets the room,
      then destroys its Messages and ChatBans in the backend, each a
@@ -2000,10 +2004,18 @@ Added on 2026-11-20:
       record to the next sync, so between the two the agent is in the
       room with nothing in the records saying so, and a look at the
       `hiddenRoom` tombstones alone misses it. A room the user deleted
-      (§7.9) is left out, since adopting it would undo the delete;
-      hosting a second one is refused, so that case fails until the next
-      sync brings the record back, and which of the two it should do is
-      bead mimid-6vsk.
+      (§7.9) is one of those, and its `Tombstone::Room` goes here as a
+      hidden room's does (decided 2026-11-27, bead mimid-6vsk): the
+      sync's `settle_forgotten_rooms` clears that tombstone for a room
+      the agent is active in and `reconcile_rooms` then makes the record
+      through the same `room_for`, so adopting leaves the state the next
+      sync would have left, one sync interval earlier, which is all
+      `Store::forget_room` promises for a room the agent is still in.
+      Writing to someone whose conversation the user deleted reopens
+      that conversation, rather than failing with the hub's refusal of a
+      second room for the pair. Whether such a delete should be durable
+      at all is bead mimid-1wgh.136. A room the agent is leaving keeps
+      its tombstone in both places.
     - **PART and destroy on a fixed room.** §5 lets a user "remove all
       its clients from the associated MLS group" but not leave the
       participant list, so §7.1's "PART leaves the room for real" cannot
@@ -2036,8 +2048,9 @@ Added on 2026-11-20:
     - Tests: mimid-server `tests/hub_policy.rs` `fixed_membership_rooms`;
       mimid-agent-store `tests/groundwork.rs`
       `one_to_one_rooms_are_made_once_and_recognised`,
-      `open_direct_does_not_host_a_second_room_over_a_sync` and
-      `open_direct_finds_an_accepted_room_the_records_do_not_have`;
+      `open_direct_does_not_host_a_second_room_over_a_sync`,
+      `open_direct_finds_an_accepted_room_the_records_do_not_have` and
+      `open_direct_adopts_a_one_to_one_room_deleted_here`;
       mimid-agent `tests/groundwork.rs` `direct_chats_over_jmap` and
       `destroying_a_direct_chat_hides_it_until_the_next_message`;
       mimid-agent-store `tests/groundwork.rs`

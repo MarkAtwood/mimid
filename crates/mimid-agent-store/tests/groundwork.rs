@@ -800,6 +800,87 @@ async fn open_direct_finds_an_accepted_room_the_records_do_not_have() {
     );
 }
 
+/// Oracle: docs/design/agent-frontends.md §7.29 and §7.9, and the
+/// decision on bead mimid-6vsk: writing to a user whose one-to-one room
+/// was deleted here reopens that room, with the record the next sync
+/// would have made for it.
+#[tokio::test]
+async fn open_direct_adopts_a_one_to_one_room_deleted_here() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut alice, bob, _, _lobby, changes) = alice_and_bob(dir.path()).await;
+    // Enough key material for a second room's invite, so that a second
+    // room is refused by the hub's policy and not by a missing
+    // KeyPackage.
+    alice.publish_key_packages(4).await.unwrap();
+    let (direct, hosted) = bob.open_direct(bob.new_key(), ALICE).await.unwrap();
+    assert!(hosted, "the first room for the pair is hosted");
+    // alice joins, so the hub's fixed room has both participants and a
+    // second room for the pair is refused (room-policy-04 §5).
+    let mut watch = changes.watch_server();
+    let number = loop {
+        let progressed = !alice.poll().await.unwrap().is_empty();
+        if let Some(number) = alice.invites().first().map(|i| i.number) {
+            break number;
+        }
+        if progressed {
+            continue;
+        }
+        watch.next("bob's invite to reach alice").await;
+    };
+    alice.join(number).unwrap();
+    alice.send_text(&direct.uri, "before").await.unwrap();
+    until_store(&bob, &changes, |s| key_of(s, "before").is_some()).await;
+
+    // Deleted, not left: the agent stays in the room, so the next sync
+    // would clear the tombstone and record the room again.
+    let deleted = bob.forget_room(&direct.key).await.expect("the room");
+    assert_eq!(deleted.removed.room.uri, direct.uri);
+    assert_eq!(bob.direct_room(ALICE), None);
+    assert_eq!(
+        bob.state().forgotten_rooms(),
+        std::slice::from_ref(&direct.uri)
+    );
+
+    let (back, new) = bob
+        .open_direct(bob.new_key(), ALICE)
+        .await
+        .expect("the deleted room, adopted");
+
+    assert!(!new, "the room was adopted, not hosted again");
+    assert_eq!(back.uri, direct.uri);
+    assert_ne!(back.key, direct.key, "a new record");
+    assert!(back.direct);
+    assert!(
+        bob.state().forgotten_rooms().is_empty(),
+        "its tombstone is gone"
+    );
+    assert_eq!(bob.direct_room(ALICE), Some(back.key.clone()));
+    assert!(key_of(&bob, "before").is_none(), "it comes back empty");
+    let directs: Vec<String> = bob
+        .state()
+        .rooms
+        .values()
+        .filter(|r| r.direct)
+        .map(|r| r.uri.clone())
+        .collect();
+    assert_eq!(
+        directs,
+        std::slice::from_ref(&direct.uri),
+        "one room for the pair"
+    );
+    assert!(
+        back.participants.iter().any(|p| p.user == ALICE),
+        "the participants a sync's record would have"
+    );
+
+    // A half-made record would pass the URI checks above and fail here.
+    bob.send(bob.new_key(), &back.key, "after", &[])
+        .await
+        .expect("a message into the adopted room");
+    let got = until_message(&mut alice, &changes, |m| m.text.as_deref() == Some("after")).await;
+    assert_eq!(got.room, direct.uri);
+}
+
 /// The bodies of `page`.
 fn bodies(page: &mimid_agent_store::Page) -> Vec<&str> {
     page.messages.iter().map(|m| m.body.as_str()).collect()

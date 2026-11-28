@@ -660,11 +660,13 @@ impl Store {
     /// A one-to-one room with `user` that the agent is in and the
     /// records do not have is that room: it comes back as a new record,
     /// empty, and is not new. One hidden here ([`Store::hide_room`]) is
-    /// one of those, and so is one joined without a record yet
+    /// one of those, one joined without a record yet is another
     /// ([`Store::accept_invite`], which leaves the record to the next
-    /// [`Store::sync`]). A room the user deleted
-    /// ([`Store::forget_room`]) is not: see `reveal_direct` and bead
-    /// mimid-6vsk.
+    /// [`Store::sync`]), and so is one the user deleted
+    /// ([`Store::forget_room`]), whose tombstone goes here rather than
+    /// at the next sync (bead mimid-6vsk): writing to someone whose
+    /// conversation the user deleted reopens that conversation. See
+    /// `reveal_direct`.
     ///
     /// The agent is taken once, before the look for the room, and held
     /// until a new one is hosted and recorded (bead mimid-604m.8). A
@@ -721,7 +723,7 @@ impl Store {
     /// The one-to-one room with `user` the agent is in that the records
     /// do not have, brought back as a new record: one `agent` is active
     /// in, direct, with `user` among its participants, that has no
-    /// record here and was not deleted here. `None` if there is none.
+    /// record here. `None` if there is none.
     ///
     /// The agent is asked, not the `hiddenRoom` tombstones, because a
     /// room hidden here ([`Store::hide_room`]) is not the only room the
@@ -732,10 +734,17 @@ impl Store {
     /// the hub refuses (bead mimid-5km1).
     ///
     /// A room the user deleted ([`Store::forget_room`],
-    /// [`crate::State::forgotten_rooms`]) is left out: adopting it would
-    /// undo the delete, so [`Store::open_direct`] goes on to host a
-    /// second room, and the hub refuses that. Which of the two that case
-    /// wants is bead mimid-6vsk.
+    /// [`crate::State::forgotten_rooms`]) is taken too, and its
+    /// `Tombstone::Room` goes the way a hidden room's tombstone does
+    /// (decision on bead mimid-6vsk). That undoes no promise
+    /// [`Store::forget_room`] makes: it says "a room the agent is still
+    /// in is not kept out", and [`Store::sync`]'s
+    /// `settle_forgotten_rooms` clears the tombstone of a room the agent
+    /// is active in while its `reconcile_rooms` makes the record through
+    /// this same `room_for`, so adopting here leaves the state the next
+    /// sync would have left, one sync interval earlier. A room the agent
+    /// is leaving is left out here as it is there, by the `Active`
+    /// filter.
     ///
     /// A room with a record is left out whatever that record's status: a
     /// record that is leaving or left while the agent is active in the
@@ -746,10 +755,9 @@ impl Store {
     /// ([`Store::open_direct`]).
     fn reveal_direct(&self, agent: &mimid_agent_core::Agent, user: &str) -> Option<Room> {
         // One look at the records, since room_for takes the lock again.
-        let (recorded, deleted) = {
+        let recorded: BTreeSet<String> = {
             let state = self.state();
-            let recorded: BTreeSet<String> = state.rooms.values().map(|r| r.uri.clone()).collect();
-            (recorded, state.forgotten_rooms())
+            state.rooms.values().map(|r| r.uri.clone()).collect()
         };
         let uri = agent
             .rooms()
@@ -758,14 +766,14 @@ impl Store {
             .map(|room| room.uri)
             .find(|uri| {
                 !recorded.contains(uri)
-                    && !deleted.contains(uri)
                     && agent.is_direct(uri).unwrap_or(false)
                     && agent
                         .participants(uri)
                         .is_ok_and(|p| p.iter().any(|u| u == user))
             })?;
-        // A hidden room's tombstone, which would make room_for return
-        // None; nothing to clear for a room that has never had a record.
+        // The room's tombstone, hidden or deleted, which would make
+        // room_for return None; nothing to clear for a room that has
+        // never had a record.
         self.state()
             .clear_room_tombstones(std::slice::from_ref(&uri));
         let mut changes = Vec::new();
