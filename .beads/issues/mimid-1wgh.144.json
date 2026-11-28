@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.144",
+  "title": "Bound the nicks a client can make the agent keep",
+  "description": "`Names` grows without bound from the socket. `Session::who`\n(crates/mimid-agent-irc/src/command.rs) returns `Who::User(uri)` for any\nsyntactically valid `mimi://\u003cdomain\u003e/u/\u003clocal\u003e` the client types, and WHOIS then\ncalls `Names::identity`, which mints and keeps a nick through `take_nick`.\nNothing is ever removed from `nicks`, `users` or `when`\n(crates/mimid-agent-irc/src/names.rs), and docs/design/agent-frontends.md says\n\"Flood control: none on loopback\", so a client can make the daemon hold as many\nnicks as it has memory for. Each entry is small, and the connection is the\nuser's own and authenticated, which is why this is a limit and not a hole.\n\nAGENTS.md: \"Every size, depth and count limit is a named constant, enforced at\nparse time. Fail closed.\" There is no constant here.\n\nWHAT NOT TO DO: a bounded mirror of the mapping with an eviction policy, which\ndecision mimid-1wgh.143 rejected for WHOWAS. Evicting from a copy buys\ndivergence from the authoritative mapping, and WHOWAS then answers 406 for the\nuser's own nick while WHOIS still answers for it. Whatever the bound is, it has\nto be on the mapping itself, and it has to say what happens to a nick already\nshown in a client's scrollback when it is dropped.\n\nA cheaper shape to consider first: mint a nick only for a user the store knows\nor that a room names, and answer WHOIS of an invented URI without keeping\nanything.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T07:07:01.760870025Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T07:07:01.760870025Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.144",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T07:07:01.798722689Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

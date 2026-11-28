@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.147",
+  "title": "refresh_dids compares a leaf's user URI raw, refresh_clients normalizes",
+  "description": "mimid-agent-store sync.rs has two passes that match an MLS leaf's credential identity (RoomClient.user) to a person record keyed by the participant-list URI. refresh_clients, added by bead mimid-1wgh.140.5, puts both sides in RFC 3986 normal form (mimid_agent_core::uri::normalized_uri), which is what mimid-agent-core itself does where the comparison matters (agent.rs around 5245). refresh_dids compares them raw.\n\nSo a URI whose two sources differ only in normal form gets its clients counted and its DID not, or the other way round. Make the two agree, in whichever direction is right, and say in one place which form a person record's key is in. Not fixed inside .140.5 because changing refresh_dids silently is the kind of change that wants its own test and its own commit.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T08:02:11.203850686Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T08:02:11.203850686Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.147",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T08:02:11.243349842Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

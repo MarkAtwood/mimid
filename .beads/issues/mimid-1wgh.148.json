@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.148",
+  "title": "JMAP shows nothing of a contact's reachability",
+  "description": "Person.clients (bead mimid-1wgh.140.5, decision mimid-1wgh.146) is the count the IRC front end reports as MONITOR's 730 and 731. It is a neutral record field, but mimid-agent-jmap's render.rs builds a ChatContact field by field and does not render it, so no JMAP client sees it.\n\nThat is the safe default -- nothing leaks by accident -- but it leaves the field's justification half true: it is in the shared store so both front ends could read it, and today only one does. Decide whether a JMAP client should see reachability at all, and if so under which draft-atwood-jmap-chat property; if not, say so at the field and close this. Mark's call: it is what a user sees.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T08:02:11.321542549Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T08:02:11.321542549Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.148",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T08:02:11.352415568Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

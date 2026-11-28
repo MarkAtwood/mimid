@@ -1,2 +1,3 @@
 {"id":"01a220d2-86b7-7a54-8e95-af1713b6a9d9","issue_id":"mimid-1wgh.142","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-28T06:23:17.687677865Z"}
 {"id":"01a220d2-86c7-76db-87ac-a2a0c7b66e89","issue_id":"mimid-1wgh.142","event_type":"label_added","actor":"Mark Atwood","comment":"Added label: decision","created_at":"2026-11-28T06:23:17.703451408Z"}
+{"id":"01a220df-0cac-7c51-9a6e-48d105a72500","issue_id":"mimid-1wgh.142","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Settled from the Modern IRC Client Protocol and the code during mimid-1wgh.140.1; the three methods and the crate's Limitations carry the pointer.","created_at":"2026-11-28T06:36:58.412808468Z"}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.145",
+  "title": "Decision: REHASH answers 382 although mimid has no IRC operator",
+  "description": "THE QUESTION. The Modern IRC Client Protocol §\"RPL_REHASHING (382)\"\nsays 382 is \"Sent to an operator which has just successfully issued a\nREHASH command\", and §\"ERR_NOPRIVILEGES (481)\", REHASH's only other\nnumeric, \"Indicates that the command failed because the user is not an\nIRC operator. The text used in the last param of this message may\nvary.\" mimid has no operator state of any kind: OPER answers 491\nERR_NOOPERHOST (decision mimid-1wgh.141), there is no user mode `o` and\n381 RPL_YOUREOPER is never sent. So under the spec's own vocabulary\nevery mimid client is a non-operator and both numerics are unreachable.\n\nTHE TWO READINGS.\n\n(A) No operator, so no REHASH: every REHASH is 481, since the user is\nnot an operator. Literal, and it throws away the one operator verb a\npersonal daemon can actually carry out. The epic's own principle\n(mimid-1wgh.140, class 3) is that IRC's verb fits the daemon's\noperation.\n\n(B) The single authenticated user is this server's operator for this\nverb's purpose, so a REHASH that read the file gets 382. Deviates from\n382's prose, which expects a state mimid does not keep.\n\nTHE CHOICE: (B), which bead mimid-1wgh.140.4 asked for. There is one\nuser, that user runs this daemon, and asking it to re-read its own file\nescalates nothing; the credential checked before registration ended\n(docs/design/frontend-auth.md §4.1) is the whole of this boundary's\nauthorization and REHASH adds none.\n\nWHAT FOLLOWS, and the part that is not free. Having sent 382 to this\nclient, mimid may not send it 481 for another REHASH, because 481's\ncondition is \"the user is not an IRC operator\" and Modern lets that\nnumeric's text vary, not its condition. So every REHASH that reads\nnothing -- no configuration file (a daemon configured in code), a file\nthat will not parse, a parameter naming another server -- is a NOTICE\nand no 382, which is the same shape as a reload that applied nothing.\nRESTART keeps its 481 because there the refusal is of the command\nitself, on Modern §\"RESTART message\"'s own sentence that it \"is\noptional since it may be viewed as a risk\".\n\nRecorded in crates/mimid-agent-irc/src/command.rs at the REHASH arm,\nthe crate's Limitations, and docs/design/agent-frontends.md §7.38.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T07:16:05.335792236Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T07:39:13.809774864Z",
+  "closed_at": "2026-11-28T07:39:13.809774864Z",
+  "close_reason": "Settled from the Modern IRC Client Protocol and the code during mimid-1wgh.140.4: 382 treats the one authenticated user as this server's operator, and no REHASH answers 481. The REHASH arm in command.rs, the crate's Limitations and docs/design/agent-frontends.md §7.38 carry the pointer.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.145",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T07:16:05.373303736Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

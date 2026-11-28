@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.140.8",
+  "title": "WHOWAS: a persisted nick history, if it is wanted",
+  "description": "A persisted nick history is the only thing that can answer the security story\nbead mimid-1wgh.140.3 opened with: a user who remembers talking to a nick in\ntheir client's scrollback deserves to know which MIMI user URI that nick stood\nfor, even when the scrollback is older than the daemon run.\n\nWHY THE IN-MEMORY ANSWER CANNOT DO IT. Within one run nothing is ever removed\nfrom `Names`: `take_nick` (crates/mimid-agent-irc/src/names.rs) only ever\ninserts, so a nick's meaning is fixed from the moment it is given. The one\nplace a nick changes meaning is `Names::load` at startup, when a kept\n`ext[\"irc\"][\"nick\"]` is malformed or was taken first and the nick is given\nagain, possibly to another user. That is across runs, and the in-memory times\ndie with the run, so WHOWAS can only ever say \"known here since\", never \"used\nto mean\".\n\nWHERE IT WOULD HAVE TO LIVE. Not a table of its own in mimid-agent-store:\nAGENTS.md's crate map forbids that crate holding front-end types \"except as\nJSON in a record's per-front-end `ext` map\". So the history belongs in\n`ext[\"irc\"]` on the `Person` record that already holds the user URI and the\ncurrent nick: the new data is the historical dimension (the nicks this person\nhad before, with when each was given and given up), not a new category of\ncontact record.\n\nWHAT IT COSTS, and why Mark decides rather than an agent. A persisted history\noutlives the client that saw the nick and becomes a durable record of whom the\nuser has talked to, which is a new thing to protect and a new thing to expire.\nIt needs a retention policy and a way to drop it. Bead mimid-1wgh.140.3 chose\nthe smaller claim deliberately (decision mimid-1wgh.143).\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T06:42:08.939904382Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T06:42:08.939904382Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140.8",
+      "depends_on_id": "mimid-1wgh.140",
+      "type": "parent-child",
+      "created_at": "2026-11-28T06:42:08.986673148Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
