@@ -779,8 +779,8 @@ pub struct Agent {
     fail_credential_commits: bool,
 }
 
-/// Test only: a step of [`Agent::receive`] or [`Agent::acknowledge_in`]
-/// that [`Agent::fail_next`] makes fail (feature `fail-points`).
+/// Test only: a step of the agent that [`Agent::fail_next`] makes fail
+/// (feature `fail-points`).
 #[cfg(feature = "fail-points")]
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -804,6 +804,10 @@ pub enum FailPoint {
     /// In [`Agent::invite_details`], before the Welcome is staged: as a
     /// Welcome that cannot be read.
     ReadInvite,
+    /// In [`Agent::host_room`]'s transaction, after the MLS group is
+    /// created and before its first Commit: as a crash in the middle of
+    /// building a new room's group.
+    FirstCommit,
 }
 
 impl std::fmt::Debug for Agent {
@@ -1569,6 +1573,11 @@ impl Agent {
     /// bound to the account, which the first KeyPackage/set does; if this
     /// identity never published one, one is published first.
     ///
+    /// The group, its first Commit and the merge commit together, in one
+    /// transaction that closes before Room/create. A Room/create that
+    /// fails leaves that group in the database with no room naming it, so
+    /// nothing reads it again.
+    ///
     /// # Errors
     ///
     /// [`AgentError::Invalid`] for a name of more than 255 octets, the
@@ -1693,21 +1702,31 @@ impl Agent {
             signature_key: sender.signature_key.to_vec(),
             identity: sender.identity.into_bytes(),
         }];
-        let mut member = Member::create(&self.identity, &group_id, &senders, &components)
-            .map_err(|e| AgentError::mls("creating the MLS group", e))?;
-        let bundle = member
-            .commit(&self.identity, &[], &[], &[], apply_commit_op)
-            .map_err(|e| AgentError::mls("the first Commit", e))?;
-        member
-            .merge_pending_commit(&self.identity)
-            .map_err(|e| AgentError::mls("merging the first Commit", e))?;
-        let tree = member
-            .ratchet_tree()
-            .map_err(|e| AgentError::mls("the ratchet tree", e))?;
-        let hosted = self
-            .provider
-            .create_room(&room, &bundle.group_info, &tree)
-            .await?;
+        // The group, its first Commit and the merge in one transaction,
+        // as `Agent::build_commit` does for every later Commit. OpenMLS
+        // writes each piece of a new group to the store as it goes, and a
+        // write with no transaction open is a transaction of its own: 28
+        // of them for one room, 112 of the 145 fsyncs a first private
+        // message costs, with the caller holding the agent mutex across
+        // all of them (beads mimid-604m.2, mimid-604m.6). Every step here
+        // is synchronous, so the transaction closes before Room/create.
+        let (member, group_info, tree) = self.in_transaction(|agent| {
+            let mut member = Member::create(&agent.identity, &group_id, &senders, &components)
+                .map_err(|e| AgentError::mls("creating the MLS group", e))?;
+            #[cfg(feature = "fail-points")]
+            agent.fail_at(FailPoint::FirstCommit)?;
+            let bundle = member
+                .commit(&agent.identity, &[], &[], &[], apply_commit_op)
+                .map_err(|e| AgentError::mls("the first Commit", e))?;
+            member
+                .merge_pending_commit(&agent.identity)
+                .map_err(|e| AgentError::mls("merging the first Commit", e))?;
+            let tree = member
+                .ratchet_tree()
+                .map_err(|e| AgentError::mls("the ratchet tree", e))?;
+            Ok((member, bundle.group_info, tree))
+        })?;
+        let hosted = self.provider.create_room(&room, &group_info, &tree).await?;
         if hosted != room {
             return Err(AgentError::malformed(
                 "Room/create",
