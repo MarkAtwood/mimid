@@ -635,7 +635,8 @@ step runs the full check list in AGENTS.md before its commit.
      feed; writes wake the sync).
 7. **Configuration.** Parse `[jmap]` and `[irc]` (section 5) with no IRC
    listener yet. Oracle: the config unit tests, plus new ones for the new
-   keys and for refusing a non-loopback IRC address.
+   keys. A non-loopback `[irc] listen` was refused here and is not any
+   more (decision mimid-1wgh.92).
 
    Built (2026-11-20):
 
@@ -689,10 +690,10 @@ step runs the full check list in AGENTS.md before its commit.
 
    Built (2026-11-20), with §7's decisions:
 
-   - `crates/mimid-agent-irc`: `IrcFrontEnd::bind(store, IrcOptions,
-     PasswordCheck)` and `serve(stop)`. The crate cannot depend on
-     mimid-agent, so the daemon hands it the `PASS` check as a closure
-     over `LocalToken::matches`; the check stays the daemon's. Modules as
+   - `crates/mimid-agent-irc`: `IrcFrontEnd::bind(store, options,
+     credentials, tls)` and `serve(stop)`. The crate cannot depend on
+     mimid-agent, so the daemon hands it the credential table it checks
+     against (§7.25); the check stays outside the front end. Modules as
      in §4, except that `names.rs` holds the casemapping and `conn.rs`
      the keepalive.
    - Names: the front end registers a `Frontend` whose `before_save`
