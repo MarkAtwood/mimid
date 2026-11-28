@@ -584,9 +584,9 @@ PQ7 is the recommendation its question made.
 - ~~Whether libpurple 2 keeps passwords in plain text in
   `accounts.xml` without a keyring plugin.~~ Checked on 2026-11-22: it
   does (§12.3).
-- Every line count and binary size is an estimate. The libpurple API
-  mappings are designs. The libpurple 3 findings hold for 2.98.0 and may
-  change with each monthly alpha.
+- Every line count and binary size is an estimate. The ABI, the event
+  set and the glue mappings are designs. The libpurple 3 findings hold
+  for 2.98.0 and may change with each monthly alpha.
 - *From memory*, not checked: std's file lock is `flock(2)` on Unix;
   `flock` over NFS on Linux; Pidgin 2's single-instance check and `-m`;
   Pidgin 2's reconnect delays; libpurple 2's user directory mode;
@@ -747,9 +747,11 @@ already run another runtime beside it and hand events over (§1.5).
   for the token, a key and message text.
 - **Shutdown.** `mimi_shutdown` (plugin unload, which libpurple 2 does
   at quit) closes every account by the release path of §6.3, waits up to
-  5 seconds (INVENTED) for them, then shuts the runtime down. A process
-  that exits sooner is a crash as far as the state is concerned, which
-  the state survives (§6.4).
+  10 s (INVENTED) for them, then shuts the runtime down. That bound is
+  the release path's own grace period (§6.3 item 8) and must not be
+  shorter than it: a shorter one cuts a release in the middle of work the
+  release path says it waits out. A process that exits sooner is a crash
+  as far as the state is concerned, which the state survives (§6.4).
 
 ### 5.5 The C ABI
 
