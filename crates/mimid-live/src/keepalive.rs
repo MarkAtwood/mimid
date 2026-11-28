@@ -112,8 +112,20 @@ pub struct Keepalive {
     max_idle_seconds: u64,
 }
 
+/// The offered pair satisfies the pacing floor, checked when this crate is
+/// compiled rather than when a test runs, because [`Default`] builds the pair
+/// without [`Keepalive::new`] and so is not checked by it.
+const _: () = assert!(
+    crate::PING_AFTER.as_secs() * PACING_FLOOR_NUMERATOR
+        < crate::MAX_IDLE.as_secs() * PACING_FLOOR_DENOMINATOR,
+    "the offered keepalive pair leaves a prober no base period it may legally choose"
+);
+
 impl Default for Keepalive {
     /// What mimid offers: [`crate::PING_AFTER`] and [`crate::MAX_IDLE`].
+    ///
+    /// Infallible, and the `const` assertion above is why: the pair cannot
+    /// reach a build that breaks the rule [`Keepalive::new`] enforces.
     fn default() -> Self {
         Self {
             min_interval_seconds: crate::PING_AFTER.as_secs(),
