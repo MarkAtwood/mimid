@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.140.4",
+  "title": "REHASH: reload the daemon's configuration, and say what could not be",
+  "description": "REHASH (382 RPL_REHASHING): the one oper verb whose operation a personal daemon actually has.\n\nIRC's REHASH reloads the server's configuration without dropping clients. mimid-agent is a daemon with a configuration file, and reloading it without restarting is a real operational want for the person running it: changing the expiry default, a listener's names, a telemetry setting, the sync interval.\n\nWHY IT IS NOT 481 like the other oper verbs: there is one user, that user runs this daemon, and they are already authenticated by the credential the connection presented. Nothing is escalated by letting them ask their own daemon to re-read its own file. That is the argument, and it should be in the code as a comment, because the four other oper verbs refuse and a reader will ask why this one does not.\n\nTHE HARD PART IS NOT THE VERB: it is which settings can change under a running daemon and which cannot. A listener's address, the database path, the agent's identity and anything the MLS state depends on cannot. The expiry policy, log level, sync and top-up intervals, and telemetry settings plausibly can. Enumerate both lists in the bead's design field before writing code, and answer 382 only for what was actually reloaded, with a NOTICE naming anything in the file that was ignored because it needs a restart. A REHASH that silently ignores half the file is worse than no REHASH.\n\nDO NOT IMPLEMENT RESTART. It is in Modern and it is the one oper verb that should stay refused with 481: a daemon that restarts itself on a client's word fights whatever supervises it, and the person who wants a restart has systemd or their shell. Say so in the design note so it is not revisited.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:34:55.19487909Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:34:55.19487909Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140.4",
+      "depends_on_id": "mimid-1wgh.140",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:34:56.886872232Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

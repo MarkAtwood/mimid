@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.140.3",
+  "title": "WHOWAS: which MIMI user a nick used to mean",
+  "description": "WHOWAS (314 RPL_WHOWASUSER, 369 RPL_ENDOFWHOWAS, 406 ERR_WASNOSUCHNICK), the thinnest of the verbs that still has something true to say.\n\nWHY IT IS THIN: a nick here is derived from a MIMI user, so it does not churn the way a nick on a network does. There is no nick history in the sense RFC 2812 means.\n\nWHY IT IS NOT EMPTY: the derivation is not injective. A nick is held (crates/mimid-agent-irc/src/names.rs, `Held`), collisions take a suffix, and a user's display name can change, so the same nick can have meant different MIMI users at different times, and the same user can have appeared under different nicks. That is exactly the question WHOWAS is for, and it is a question with a security edge: a user who remembers talking to a nick deserves to know which user URI it was, because a nick that has been reused is how a person is impersonated in a client's scrollback.\n\nWHAT IT SHOULD ANSWER: for a nick this connection has seen, the MIMI user URI it mapped to and when, bounded by what the front end actually retains. For anything else, 406 ERR_WASNOSUCHNICK, which is the correct refusal and a better answer than 421.\n\nDECIDE AND RECORD, since this is where it could go wrong: whether the mapping is kept per connection or in the store. Per connection is cheap, truthful and forgets on reconnect; in the store it outlives a client and becomes a record of who the user talked to, which is a new thing to protect and to expire. Per connection is the smaller claim and the suggested one, with the limitation written down rather than implied.\n\nNEVER answer for a nick belonging to another provider's user in a way that asserts anything the authenticated MIMI sender did not say: the sender is always the authenticated MLS sender, and a nick mapping is a rendering, not an identity claim.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:34:52.824789036Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:34:52.824789036Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140.3",
+      "depends_on_id": "mimid-1wgh.140",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:34:53.979874783Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

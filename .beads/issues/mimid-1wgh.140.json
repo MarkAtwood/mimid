@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.140",
+  "title": "Answer every Modern IRC verb, or refuse it with the right numeric",
+  "description": "Mark 2026-11-27: \"bead out implementing every irc verb that makes some sort of sense here, even the minor ones\".\n\nTHE INVENTORY, taken against ~/PROJECT/IETF/specs/ircdocs-modern.html, the Modern IRC Client Protocol, which defines 40 client commands. mimid answers 24: AUTHENTICATE, AWAY, CAP, INVITE, JOIN, KICK, LIST, MODE, MOTD, NAMES, NICK, NOTICE, PART, PASS, PING, PONG, PRIVMSG, QUIT, TOPIC, USER, USERHOST, VERSION, WHO, WHOIS. It also answers CHATHISTORY, MARKREAD, METADATA, REDACT, TAGMSG, WEBPUSH, FAIL and the MIMID service verb, which Modern does not define.\n\nERROR is not missing. It appears in a dispatch diff because mimid never receives it, and it is outbound only: conn.rs queues \"ERROR :Closing Link: \u003cpeer\u003e (\u003cwhy\u003e)\" before closing. Do not implement it as a command.\n\nThat leaves sixteen. Four are already beaded as mimid-1wgh.138.1: STATS, TIME, INFO and HELP. The other twelve are the children here: ADMIN, LUSERS, LINKS, WHOWAS, OPER, CONNECT, SQUIT, KILL, WALLOPS, REHASH, RESTART, and the two IRCv3 verbs mimid lacks, MONITOR and SETNAME.\n\nTHE PRINCIPLE THAT MAKES THIS COHERENT, and the reason \"every verb that makes sense\" is not the same as \"every verb implemented\". A verb splits three ways here:\n\n1. It can answer with mimid's own data, truthfully. ADMIN, LUSERS, LINKS, WHOWAS, MONITOR, SETNAME.\n2. It cannot apply, and the right behaviour is the numeric that says so rather than ERR_UNKNOWNCOMMAND. OPER answers 491 ERR_NOOPERHOST; CONNECT, SQUIT, KILL and WALLOPS answer 481 ERR_NOPRIVILEGES. Today each gets 421, which tells a client mimid does not speak IRC properly, when the truth is that mimid speaks IRC and the command has no meaning for a single-user agent. 421 is a worse answer than a refusal.\n3. It is the daemon's own operation, where IRC's verb happens to fit. REHASH.\n\nSo no verb in Modern is left answering 421 when this epic closes, and the design note says for each one which of the three it is and why.\n\nNUMERICS COME FROM ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml, never from memory, and a comment cites the document that actually defines what it uses: Modern for anything RFC 2812 lacks, the IRCv3 spec file for MONITOR and SETNAME. Bead mimid-1wgh.138.1 records why: HELP's numerics are in no RFC.\n\n~/PROJECT/meshIRCd is a second reference and a legitimate fixture source under mimid's AGENTS.md, being an independent implementation. It answers TIME, LUSERS and MONITOR already, and has no ADMIN, LINKS, WHOWAS, OPER or the oper-only verbs.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "epic",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:33:50.291732933Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:33:50.291732933Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:33:51.837138235Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

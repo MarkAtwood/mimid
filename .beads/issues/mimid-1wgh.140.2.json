@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.140.2",
+  "title": "Refuse OPER, CONNECT, SQUIT, KILL and WALLOPS with their own numerics",
+  "description": "The verbs that cannot apply should say so with the numeric that means it, not with 421.\n\nToday crates/mimid-agent-irc/src/command.rs ends its dispatch with `other =\u003e self.numeric(\"421\", \u0026[other, \"Unknown command\"])`, so OPER, CONNECT, SQUIT, KILL and WALLOPS all answer ERR_UNKNOWNCOMMAND. That is the wrong answer in a way that matters: 421 tells a client this server does not know the command, when the truth is that mimid knows it and it has no meaning for a one-user agent with no network behind it. A client that sees 421 for OPER concludes the server is incomplete; one that sees 491 learns there is no operator here, which is a fact about mimid.\n\nWHAT EACH BECOMES, from ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml:\n\n- OPER: 491 ERR_NOOPERHOST. There is one user and they already have everything there is to have; no operator exists to become. Never 381 RPL_YOUREOPER, and no password comparison: a credential check here would be a second authorization boundary, which the security rules forbid outside the one place per boundary.\n- CONNECT, SQUIT: 481 ERR_NOPRIVILEGES. Both act on a server link, and there are none.\n- KILL: 481. It disconnects another user's client, and every nick but this user's belongs to someone at another provider. The user's own other devices are reached by the service's forget-device, which is a MIMI operation and not this.\n- WALLOPS: 481. It broadcasts to opted-in operators. The agent's own notices reach the user through the service nick, which is the path that already exists.\n\nKEEP 421 THE DEFAULT for anything genuinely unknown: the point is to name the five that are known and refused, not to answer everything.\n\nTEST that each of the five gets its own numeric and that an invented verb still gets 421, since a change that turned the default into a refusal would hide a client's typo.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:34:22.183047748Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:34:22.183047748Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140.2",
+      "depends_on_id": "mimid-1wgh.140",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:34:23.36826908Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
