@@ -1,10 +1,11 @@
-//! The messages of version 1 (docs/design/binary-live-stream.md §5.11,
+//! The messages of version 2 (docs/design/binary-live-stream.md §5.11,
 //! whose CDDL each type mirrors; decision mimid-1wgh.77).
 
 use std::collections::BTreeMap;
 
 use crate::cbor::{self, Value};
 use crate::fields::{Extra, Fields, Writer, as_bytes, as_text, as_uint};
+use crate::keepalive::{Keepalive, KeepaliveError};
 use crate::{DecodeError, FrameError, VERSION};
 
 /// A message from the client.
@@ -23,6 +24,12 @@ pub struct ClientHello {
     pub versions: Vec<u64>,
     /// The bearer token (decision mimid-1wgh.73).
     pub token: String,
+    /// What the client answers as a responder: the shortest probe
+    /// interval and the longest idle it tolerates
+    /// (draft-atwood-mimi-keepalive-00 §4.1, §4.3). `None` from a client
+    /// that states neither, which the provider then probes on the pair it
+    /// stated itself (decision mimid-1wgh.137).
+    pub keepalive: Option<Keepalive>,
     /// Members the CDDL does not name.
     pub extra: Extra,
 }
@@ -32,6 +39,7 @@ impl std::fmt::Debug for ClientHello {
         f.debug_struct("ClientHello")
             .field("versions", &self.versions)
             .field("token", &"<redacted>")
+            .field("keepalive", &self.keepalive)
             .finish_non_exhaustive()
     }
 }
@@ -500,7 +508,40 @@ fn envelope(f: &mut Fields) -> Result<(u64, String), DecodeError> {
     Ok((v, t))
 }
 
-/// The hello messages keep their v1 form in every version (Agora §11.6).
+/// Reads a hello's keepalive pair: both members, or neither
+/// (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42). One alone and
+/// a pair with no room for two probes are both refused here, at parse
+/// time, so no caller holds an unusable pair.
+fn read_keepalive(f: &mut Fields) -> Result<Option<Keepalive>, DecodeError> {
+    let min = f.opt_uint("minIntervalSeconds")?;
+    let max = f.opt_uint("maxIdleSeconds")?;
+    match (min, max) {
+        (None, None) => Ok(None),
+        (Some(min), Some(max)) => Ok(Some(Keepalive::new(min, max)?)),
+        (Some(_), None) => Err(KeepaliveError::Half {
+            present: "minIntervalSeconds",
+            missing: "maxIdleSeconds",
+        }
+        .into()),
+        (None, Some(_)) => Err(KeepaliveError::Half {
+            present: "maxIdleSeconds",
+            missing: "minIntervalSeconds",
+        }
+        .into()),
+    }
+}
+
+fn write_keepalive(w: &mut Writer, keepalive: Option<&Keepalive>) {
+    w.opt_uint(
+        "minIntervalSeconds",
+        keepalive.map(Keepalive::min_interval_seconds),
+    )
+    .opt_uint("maxIdleSeconds", keepalive.map(Keepalive::max_idle_seconds));
+}
+
+/// The hello messages keep their v1 form in every version (Agora §11.6),
+/// so a member version 2 added is optional: a version 1 hello still
+/// decodes, which is how the two ends find out they share no version.
 fn check_hello_version(v: u64) -> Result<(), DecodeError> {
     if v == 1 {
         Ok(())
@@ -549,6 +590,7 @@ impl ClientMessage {
                 Ok(ClientHello {
                     versions,
                     token: f.text("token")?,
+                    keepalive: read_keepalive(&mut f)?,
                     extra: Vec::new(),
                 })
             })()
@@ -582,6 +624,7 @@ impl ClientMessage {
                     Value::Array(hello.versions.iter().map(|v| Value::Uint(*v)).collect()),
                 )
                 .text("token", &hello.token);
+                write_keepalive(&mut w, hello.keepalive.as_ref());
                 w.finish(&hello.extra)
             }
             Self::Request(request) => {
@@ -656,6 +699,13 @@ pub struct ProviderHello {
     pub fetches_assets: bool,
     /// Whether `SetChatAccepted` works (decision mimid-1wgh.63).
     pub accepted_rooms: bool,
+    /// What the provider answers as a responder: the shortest probe
+    /// interval and the longest idle it tolerates
+    /// (draft-atwood-mimi-keepalive-00 §4.1, §4.3). `None` from a
+    /// provider that states neither, which the agent then does not probe
+    /// at all, having no pacing the provider undertook to answer
+    /// (decision mimid-1wgh.137).
+    pub keepalive: Option<Keepalive>,
     /// Members the CDDL does not name.
     pub extra: Extra,
 }
@@ -1250,6 +1300,7 @@ impl ProviderMessage {
                     message_retention: f.opt_uint("messageRetention")?,
                     fetches_assets: f.bool("fetchesAssets")?,
                     accepted_rooms: f.bool("acceptedRooms")?,
+                    keepalive: read_keepalive(&mut f)?,
                     extra: Vec::new(),
                 })
             })()
@@ -1368,6 +1419,7 @@ impl ProviderMessage {
                     .opt_uint("messageRetention", h.message_retention)
                     .bool("fetchesAssets", h.fetches_assets)
                     .bool("acceptedRooms", h.accepted_rooms);
+                write_keepalive(&mut w, h.keepalive.as_ref());
                 w.finish(&h.extra)
             }
             Self::Ack(a) => {

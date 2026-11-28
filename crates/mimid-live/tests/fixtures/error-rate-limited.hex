@@ -1,11 +1,11 @@
-; Error = {"v": 1, "t": "Error", "id": 7, "code": "rateLimited", "retryAfter": 2}
+; Error = {"v": 2, "t": "Error", "id": 7, "code": "rateLimited", "retryAfter": 2}
 ; (draft-atwood-jmap-chat-mimi-00 §capability retryAfter; bead mimid-e64f.21)
 ; Keys: t, v, id, code, retryAfter.
 a5                                  ; map, 5 pairs
 61 74                               ; "t"
 65 45 72 72 6f 72                   ; "Error"
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 07                                  ; 7
 64 63 6f 64 65                      ; "code"

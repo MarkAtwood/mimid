@@ -1,11 +1,11 @@
-; Send = {"v": 1, "t": "Send", "id": 300, "room": "mimi://a.example/r/x",
+; Send = {"v": 2, "t": "Send", "id": 300, "room": "mimi://a.example/r/x",
 ;         "message": h'000102'}
 ; Keys: t, v, id, room, message.
 a5                                  ; map, 5 pairs
 61 74                               ; "t"
 64 53 65 6e 64                      ; "Send"
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 19 01 2c                            ; 300, two-byte argument
 64 72 6f 6f 6d                      ; "room"

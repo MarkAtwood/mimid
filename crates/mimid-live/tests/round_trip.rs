@@ -4,7 +4,7 @@
 
 use mimid_live::{
     Ack, AckResult, ClientMessage, ConsentEntry, ErrorMessage, KeyPackageEntry, Op, OpKind,
-    ProviderMessage, Request,
+    ProviderMessage, Request, VERSION,
 };
 
 fn ops() -> Vec<Op> {
@@ -94,7 +94,7 @@ fn ops() -> Vec<Op> {
 fn every_request_round_trips() {
     for (id, op) in ops().into_iter().enumerate() {
         let message = ClientMessage::Request(Request {
-            v: 1,
+            v: VERSION,
             id: id as u64,
             op,
             extra: Vec::new(),
@@ -183,7 +183,7 @@ fn every_ack_round_trips() {
         (OpKind::FetchAsset, AckResult::FetchAsset { data: vec![6] }),
     ] {
         let message = ProviderMessage::Ack(Ack {
-            v: 1,
+            v: VERSION,
             id: 1,
             result,
             extra: Vec::new(),

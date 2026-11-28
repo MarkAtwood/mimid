@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use mimid_live::cbor::Value;
 use mimid_live::{
     Ack, AckResult, Changed, ChatEntry, ClientEntry, ClientHello, ClientMessage, ConsentEntry,
-    Deliver, ErrorMessage, Op, OpKind, Position, ProviderHello, ProviderMessage, Request,
+    Deliver, ErrorMessage, Keepalive, KeepaliveError, Op, OpKind, Position, ProviderHello,
+    ProviderMessage, Request,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -40,7 +41,7 @@ fn provider(name: &str, kind: Option<OpKind>, expected: ProviderMessage) {
 
 fn request(id: u64, op: Op) -> ClientMessage {
     ClientMessage::Request(Request {
-        v: 1,
+        v: 2,
         id,
         op,
         extra: Vec::new(),
@@ -49,7 +50,7 @@ fn request(id: u64, op: Op) -> ClientMessage {
 
 fn ack(id: u64, result: AckResult) -> ProviderMessage {
     ProviderMessage::Ack(Ack {
-        v: 1,
+        v: 2,
         id,
         result,
         extra: Vec::new(),
@@ -63,6 +64,23 @@ fn client_hello() {
         ClientMessage::Hello(ClientHello {
             versions: vec![1],
             token: "tok".to_owned(),
+            keepalive: None,
+            extra: Vec::new(),
+        }),
+    );
+}
+
+/// Bead mimid-mm42: the keepalive pair a client states as a responder
+/// (draft-atwood-mimi-keepalive-00 §4.1), and a client that speaks both
+/// versions.
+#[test]
+fn client_hello_with_a_keepalive() {
+    client(
+        "client-hello-keepalive.hex",
+        ClientMessage::Hello(ClientHello {
+            versions: vec![1, 2],
+            token: "tok".to_owned(),
+            keepalive: Some(Keepalive::new(30, 120).unwrap()),
             extra: Vec::new(),
         }),
     );
@@ -167,6 +185,7 @@ fn provider_hello() {
             max_clients: None,
             fetches_assets: true,
             accepted_rooms: true,
+            keepalive: None,
             extra: Vec::new(),
         }),
     );
@@ -195,6 +214,7 @@ fn provider_hello_with_max_clients() {
             message_retention: None,
             fetches_assets: true,
             accepted_rooms: true,
+            keepalive: None,
             extra: Vec::new(),
         }),
     );
@@ -223,6 +243,37 @@ fn provider_hello_with_max_key_package_lifetime() {
             max_clients: None,
             fetches_assets: true,
             accepted_rooms: true,
+            keepalive: None,
+            extra: Vec::new(),
+        }),
+    );
+}
+
+/// Bead mimid-mm42: version 2's hello, with the keepalive pair the
+/// provider states as a responder (draft-atwood-mimi-keepalive-00 §4.1).
+#[test]
+fn provider_hello_with_a_keepalive() {
+    provider(
+        "provider-hello-keepalive.hex",
+        None,
+        ProviderMessage::Hello(ProviderHello {
+            version: 2,
+            user_uri: "mimi://a.example/u/alice".to_owned(),
+            room_id_prefix: "mimi://a.example/r/".to_owned(),
+            hub_sender: vec![1],
+            cipher_suites: vec![1],
+            max_key_packages: 100,
+            max_key_package_lifetime: None,
+            max_message_bytes: 16 * 1024 * 1024 + 64 * 1024,
+            max_request_bytes: 4 * 1024 * 1024 + 64 * 1024,
+            max_mls_object_size: None,
+            stores_assets: true,
+            asset_lifetime: Some(3600),
+            message_retention: None,
+            max_clients: None,
+            fetches_assets: true,
+            accepted_rooms: true,
+            keepalive: Some(Keepalive::new(30, 120).unwrap()),
             extra: Vec::new(),
         }),
     );
@@ -251,6 +302,7 @@ fn provider_hello_with_message_retention() {
             max_clients: None,
             fetches_assets: true,
             accepted_rooms: true,
+            keepalive: None,
             extra: Vec::new(),
         }),
     );
@@ -384,7 +436,7 @@ fn deliver() {
         "deliver.hex",
         None,
         ProviderMessage::Deliver(Deliver {
-            v: 1,
+            v: 2,
             message_id: "M1".to_owned(),
             chat_id: "C1".to_owned(),
             fanout: vec![0, 1],
@@ -399,7 +451,7 @@ fn position_keeps_an_unknown_member() {
         "position-unknown-member.hex",
         None,
         ProviderMessage::Position(Position {
-            v: 1,
+            v: 2,
             state: "12.3".to_owned(),
             extra: vec![(Value::Text("zz".to_owned()), Value::Uint(0))],
         }),
@@ -412,10 +464,37 @@ fn changed() {
         "changed.hex",
         None,
         ProviderMessage::Changed(Changed {
-            v: 1,
+            v: 2,
             types: vec!["Consent".to_owned(), "KeyPackage".to_owned()],
             extra: Vec::new(),
         }),
+    );
+}
+
+/// Bead mimid-mm42: the agent refuses a provider whose pair leaves no
+/// room for two probes (draft-atwood-mimi-keepalive-00 §4.1) instead of
+/// probing on it. The fixture's `maxIdleSeconds` is lowered to
+/// `PROBES_PER_IDLE` times its `minIntervalSeconds`, the largest value
+/// the rule refuses.
+#[test]
+fn a_provider_hello_whose_keepalive_leaves_no_room_is_refused() {
+    let Value::Map(mut pairs) = mimid_live::cbor::decode(&fixture("provider-hello-keepalive.hex"))
+        .expect("the fixture decodes")
+    else {
+        panic!("not a map")
+    };
+    for (key, value) in &mut pairs {
+        if *key == Value::Text("maxIdleSeconds".to_owned()) {
+            *value = Value::Uint(90);
+        }
+    }
+    let broken = mimid_live::cbor::encode(&Value::Map(pairs));
+    let error = ProviderMessage::decode(&broken, |_| None)
+        .unwrap_err()
+        .error;
+    assert_eq!(
+        error,
+        mimid_live::DecodeError::Keepalive(KeepaliveError::NoRoom { min: 30, max: 90 })
     );
 }
 
@@ -430,7 +509,7 @@ fn any_key_order_decodes_to_the_same_message() {
             0x65, b's', b'i', b'n', b'c', b'e', 0x64, b'1', b'2', b'.', b'3',
         ],
         &[0x62, b'i', b'd', 0x07],
-        &[0x61, b'v', 0x01],
+        &[0x61, b'v', 0x02],
         &[0x61, b't', 0x69],
         b"Subscribe",
     ]

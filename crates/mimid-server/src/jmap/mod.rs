@@ -56,12 +56,12 @@ pub mod rate;
 pub mod session;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, FromRef};
 use axum::routing::{get, post};
 use jmap_server::Dispatcher;
+use mimid_live::Keepalive;
 
 use crate::config::BaseUrl;
 use crate::follower::Follower;
@@ -172,11 +172,15 @@ pub struct JmapOptions {
     /// Whether to serve the live stream at [`mimid_live::PATH`]
     /// (module `live`; decision mimid-1wgh.80). `false` by default.
     pub live_stream: bool,
-    /// How long a live stream connection may be quiet before the
-    /// provider sends a WebSocket Ping, and how long it then waits for
-    /// anything back (decision mimid-1wgh.133).
-    /// [`mimid_live::PING_AFTER`] by default; a test sets it short.
-    pub live_ping_after: Duration,
+    /// The keepalive pair the provider offers in its `ProviderHello`:
+    /// the shortest probe interval it answers and the longest idle it
+    /// tolerates (draft-atwood-mimi-keepalive-00 §4.1; decision
+    /// mimid-1wgh.137). What the provider offers, not what it enforces:
+    /// it probes a connection on the pair that connection's `ClientHello`
+    /// stated, and falls back to this one for a client that stated
+    /// neither. [`mimid_live::Keepalive::default`] by default; a test
+    /// sets it short.
+    pub live_keepalive: Keepalive,
 }
 
 impl std::fmt::Debug for JmapOptions {
@@ -189,7 +193,7 @@ impl std::fmt::Debug for JmapOptions {
             .field("message_retention", &self.message_retention)
             .field("key_material_limit", &self.key_material_limit)
             .field("live_stream", &self.live_stream)
-            .field("live_ping_after", &self.live_ping_after)
+            .field("live_keepalive", &self.live_keepalive)
             .finish_non_exhaustive()
     }
 }
@@ -205,7 +209,7 @@ impl Default for JmapOptions {
             message_retention: None,
             key_material_limit: Some(rate::DEFAULT_KEY_MATERIAL_LIMIT),
             live_stream: false,
-            live_ping_after: mimid_live::PING_AFTER,
+            live_keepalive: Keepalive::default(),
         }
     }
 }
@@ -246,8 +250,9 @@ struct Inner {
     message_retention: Option<u64>,
     /// The `KeyMaterial/fetch` limit both bindings share.
     key_material_limiter: Option<rate::RateLimiter>,
-    /// The live stream's keepalive interval ([`JmapOptions::live_ping_after`]).
-    live_ping_after: Duration,
+    /// The keepalive pair the live stream offers
+    /// ([`JmapOptions::live_keepalive`]).
+    live_keepalive: Keepalive,
 }
 
 impl FromRef<JmapState> for Authenticator {
@@ -342,7 +347,7 @@ pub fn router(
         asset_lifetime: options.asset_lifetime,
         message_retention: options.message_retention,
         key_material_limiter,
-        live_ping_after: options.live_ping_after,
+        live_keepalive: options.live_keepalive,
     }));
     let mut router = Router::new();
     if options.live_stream {

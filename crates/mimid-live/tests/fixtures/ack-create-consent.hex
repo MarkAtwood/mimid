@@ -1,4 +1,4 @@
-; Ack of a CreateConsent = {"v": 1, "t": "Ack", "id": 3, "record": {
+; Ack of a CreateConsent = {"v": 2, "t": "Ack", "id": 3, "record": {
 ;   "consentId": "cs7", "requesterUri": "mimi://a.example/u/alice",
 ;   "targetUri": "mimi://e.example/u/erin", "room": null, "requested": true,
 ;   "decision": null, "updated": 1700000000000}}
@@ -8,7 +8,7 @@ a4                                  ; map, 4 pairs
 61 74                               ; "t"
 63 41 63 6b                         ; "Ack"
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 03                                  ; 3
 66 72 65 63 6f 72 64                ; "record"

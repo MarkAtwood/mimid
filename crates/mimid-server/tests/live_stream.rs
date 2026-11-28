@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
 use mimid_live::{
-    AckResult, ClientHello, ClientMessage, ErrorMessage, Op, OpKind, ProviderMessage, Request, code,
+    AckResult, ClientHello, ClientMessage, ErrorMessage, Keepalive, Op, OpKind, ProviderMessage,
+    Request, VERSION, code,
 };
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
@@ -42,13 +43,14 @@ struct Server {
 /// a.example's stack as main.rs wires it, with the live stream `on` or
 /// off, and Alice's account.
 async fn server(on: bool) -> Server {
-    server_pinged(on, mimid_live::PING_AFTER).await
+    server_pinged(on, Keepalive::default()).await
 }
 
-/// [`server`], probing a quiet connection every `ping_after` instead of
-/// at the deployed interval, so the keepalive tests take milliseconds
-/// (decision mimid-1wgh.133).
-async fn server_pinged(on: bool, ping_after: std::time::Duration) -> Server {
+/// [`server`], offering `keepalive` instead of the deployed pair, so the
+/// keepalive tests take seconds rather than minutes (decision
+/// mimid-1wgh.133, bead mimid-mm42). The pair is what the provider offers
+/// and what it probes a client that states none on.
+async fn server_pinged(on: bool, keepalive: Keepalive) -> Server {
     let dir = tempfile::tempdir().unwrap();
     let domain = Domain::try_from("a.example".to_owned()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -92,7 +94,7 @@ async fn server_pinged(on: bool, ping_after: std::time::Duration) -> Server {
     let token = store.issue_token(&account, 2).await.unwrap();
     let mut options = JmapOptions::default();
     options.live_stream = on;
-    options.live_ping_after = ping_after;
+    options.live_keepalive = keepalive;
     options.message_retention = Some(3600);
     // Two KeyMaterial/fetch calls, then one an hour (bead mimid-e64f.21).
     options.key_material_limit = Some(mimid_server::jmap::rate::RateLimit {
@@ -162,17 +164,32 @@ impl Server {
     }
 }
 
+/// A hello that states no keepalive pair, as a client written before
+/// version 2 does (bead mimid-mm42): the provider probes it on the pair
+/// the provider stated itself.
 fn hello(token: &str) -> ClientMessage {
     ClientMessage::Hello(ClientHello {
-        versions: vec![1],
+        versions: vec![VERSION],
         token: token.to_owned(),
+        keepalive: None,
+        extra: Vec::new(),
+    })
+}
+
+/// A hello stating `keepalive`, the pair the provider then probes this
+/// connection on (draft-atwood-mimi-keepalive-00 §4.3).
+fn hello_stating(token: &str, keepalive: Keepalive) -> ClientMessage {
+    ClientMessage::Hello(ClientHello {
+        versions: vec![VERSION],
+        token: token.to_owned(),
+        keepalive: Some(keepalive),
         extra: Vec::new(),
     })
 }
 
 fn request(id: u64, op: Op) -> ClientMessage {
     ClientMessage::Request(Request {
-        v: 1,
+        v: VERSION,
         id,
         op,
         extra: Vec::new(),
@@ -385,7 +402,7 @@ async fn the_hello_comes_first_and_once() {
     let mut socket = server.connect().await;
     let mut hello = hello(&server.token.expose_secret());
     if let ClientMessage::Hello(h) = &mut hello {
-        h.versions = vec![2, 3];
+        h.versions = vec![1, 3];
     }
     send(&mut socket, &hello).await;
     expect_error(&mut socket, None, code::UNSUPPORTED_VERSION, true).await;
@@ -498,14 +515,14 @@ async fn frames_past_the_limits_are_refused_and_at_them_accepted() {
 async fn a_request_that_does_not_decode_is_bad_message_with_its_id() {
     let server = server(true).await;
     let mut socket = server.open().await;
-    // {"t": "Teleport", "v": 1, "id": 5}
+    // {"t": "Teleport", "v": 2, "id": 5}
     let mut frame = vec![0xa3, 0x61, b't', 0x68];
     frame.extend(b"Teleport");
-    frame.extend([0x61, b'v', 0x01, 0x62, b'i', b'd', 0x05]);
+    frame.extend([0x61, b'v', 0x02, 0x62, b'i', b'd', 0x05]);
     socket.send(Message::Binary(frame.into())).await.unwrap();
     expect_error(&mut socket, Some(5), code::BAD_MESSAGE, false).await;
     // A duplicate key: no id is trusted.
-    let frame = vec![0xa2, 0x61, b'v', 0x01, 0x61, b'v', 0x01];
+    let frame = vec![0xa2, 0x61, b'v', 0x02, 0x61, b'v', 0x02];
     socket.send(Message::Binary(frame.into())).await.unwrap();
     expect_error(&mut socket, None, code::BAD_MESSAGE, false).await;
     // The connection still works.
@@ -858,22 +875,29 @@ async fn key_material_over_the_limit_is_rate_limited_on_both_bindings() {
     }
 }
 
-/// How long a quiet connection waits for its probe in the two keepalive
-/// tests. Short enough to be quick, long enough that the hello before it
-/// is not raced on a loaded machine.
-const PROBE: std::time::Duration = std::time::Duration::from_millis(200);
+/// The shortest pair the wire can carry, since both values are whole
+/// seconds (draft-atwood-mimi-keepalive-00 §4.1): one second between
+/// probes and four of idle, which is 3 x 1 < 4. The keepalive tests take
+/// seconds because of it.
+fn probe_pair() -> Keepalive {
+    Keepalive::new(1, 4).expect("3 x 1 < 4")
+}
 
 /// The provider probes a quiet connection with a WebSocket Ping
-/// (decision mimid-1wgh.133). Version 1 of the stream has no keepalive
-/// of its own and MIMI defines none, so the probe is the transport's: it
-/// shows the far end's read loop is turning, and it gives a middlebox
-/// that reaps idle carriers something to see.
+/// (decision mimid-1wgh.133). The stream has no keepalive message of its
+/// own, so the probe is the transport's: it shows the far end's read loop
+/// is turning, and it gives a middlebox that reaps idle carriers
+/// something to see.
+///
+/// The client here states no pair, so the provider probes it on the pair
+/// the provider stated itself: bead mimid-mm42's compatibility
+/// requirement, that a client offering nothing still works.
 ///
 /// The Ping is the event waited for, so a provider that never probes
 /// hangs this test rather than failing it on a loaded machine.
 #[tokio::test]
-async fn a_quiet_connection_is_pinged() {
-    let server = server_pinged(true, PROBE).await;
+async fn a_quiet_connection_that_states_no_keepalive_is_pinged() {
+    let server = server_pinged(true, probe_pair()).await;
     let mut socket = server.open().await;
     loop {
         match socket.next().await {
@@ -887,25 +911,92 @@ async fn a_quiet_connection_is_pinged() {
     }
 }
 
+/// The provider probes on the pair the client stated, not on its own
+/// (draft-atwood-mimi-keepalive-00 §4.3): the provider here offers the
+/// deployed pair, which would not probe for well over a minute, and the
+/// client states seconds.
+///
+/// The deadline is the one assertion of time in these tests, and it is
+/// what makes the test mean anything: ten seconds is longer than several
+/// of the periods the client stated and shorter than one of the
+/// provider's own, whose shortest jittered interval is 31 seconds, so
+/// only a provider pacing itself by the client's pair meets it.
+#[tokio::test]
+async fn a_connection_is_probed_on_the_pair_it_stated() {
+    let server = server_pinged(true, Keepalive::default()).await;
+    let mut socket = server.connect().await;
+    send(
+        &mut socket,
+        &hello_stating(&server.token.expose_secret(), probe_pair()),
+    )
+    .await;
+    let pinged = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Ping(_))) => return true,
+                Some(Ok(_)) => {}
+                other => panic!("the connection ended before any Ping: {other:?}"),
+            }
+        }
+    })
+    .await;
+    assert_eq!(pinged, Ok(true), "no Ping on the client's own interval");
+}
+
 /// A connection that answers no Ping is closed. Not polling the socket
 /// is what makes it silent: the WebSocket layer answers a Ping while a
 /// client is reading, so a client that reads nothing sends nothing, as a
 /// client whose carrier a middlebox reaped does.
 ///
 /// The sleep is the input, not a deadline on an answer: it is how long
-/// this client stays silent. The assertion after it waits for the close
-/// with no deadline at all, so a provider that keeps the connection
-/// forever hangs the test.
+/// this client stays silent. Twice the idle tolerance, because the
+/// provider gives up after four or five jittered periods, and a client
+/// that woke sooner would answer a buffered Ping with a Pong and keep
+/// the carrier alive. The assertion after it waits for the close with no
+/// deadline at all, so a provider that keeps the connection forever hangs
+/// the test.
 #[tokio::test]
 async fn a_connection_that_answers_no_ping_is_closed() {
-    let server = server_pinged(true, PROBE).await;
+    let pair = probe_pair();
+    let server = server_pinged(true, pair).await;
     let mut socket = server.open().await;
-    tokio::time::sleep(PROBE * 4).await;
+    tokio::time::sleep(pair.max_idle() * 2).await;
     loop {
         match socket.next().await {
             Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_))) => {}
             None | Some(Ok(Message::Close(_))) | Some(Err(_)) => return,
             Some(Ok(other)) => panic!("unexpected frame: {other:?}"),
         }
+    }
+}
+
+/// A `ClientHello` whose pair leaves no room for two probes and their
+/// answers is refused with the stream's own code
+/// (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42). The frame is
+/// built from CBOR rather than from [`ClientHello`], which cannot hold
+/// such a pair.
+#[tokio::test]
+async fn a_hello_whose_keepalive_leaves_no_room_is_refused() {
+    use mimid_live::cbor::{Value, encode};
+
+    let text = |t: &str| Value::Text(t.to_owned());
+    let server = server(true).await;
+    // Three times the interval at the idle tolerance, a pair of ones, and
+    // a zero interval.
+    for (min, max) in [(30, 90), (1, 1), (0, 10)] {
+        let mut socket = server.connect().await;
+        let frame = encode(&Value::Map(vec![
+            (text("v"), Value::Uint(1)),
+            (text("t"), text("ClientHello")),
+            (text("versions"), Value::Array(vec![Value::Uint(VERSION)])),
+            (text("token"), text(&server.token.expose_secret())),
+            (text("minIntervalSeconds"), Value::Uint(min)),
+            (text("maxIdleSeconds"), Value::Uint(max)),
+        ]));
+        socket
+            .send(Message::Binary(frame.into()))
+            .await
+            .expect("the frame goes out");
+        expect_error(&mut socket, None, code::BAD_KEEPALIVE, true).await;
     }
 }

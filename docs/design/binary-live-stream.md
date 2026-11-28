@@ -165,12 +165,12 @@ The keepalive is the transport's, and both ends send it (decision
 mimid-1wgh.133). The binding's own messages have no ping: `ClientMessage`
 is `Hello` or `Request`, and `ProviderMessage` is `Hello`, `Ack`,
 `Error`, `Deliver`, `Position` or `Changed`. Each end sends a WebSocket
-Ping (RFC 6455 §5.5.2) after `PING_AFTER` of quiet -- 30 seconds, under
-the 60 where deployed NATs and load balancers reap an idle TCP
-connection -- and ends the connection if nothing at all has arrived by
-the next probe, so a dead carrier is noticed within a minute. Any frame
-counts as a sign of life, a Pong included: a far end answers a Ping only
-while it is reading, so a Pong proves its read loop is turning.
+Ping (RFC 6455 §5.5.2) when the connection has been quiet for the
+interval the far end stated in its hello, and gives up on the carrier
+once two probes have gone unanswered for the idle tolerance that far end
+stated (§5.12). Any frame counts as a sign of life, a Pong included: a
+far end answers a Ping only while it is reading, so a Pong proves its
+read loop is turning.
 
 A Ping says the pipe is there and the far end is reading. It does not say
 the provider can serve a request: one wedged behind its database still
@@ -179,7 +179,14 @@ keepalive at all (protocol-07 and the other drafts have no ping, pong,
 heartbeat or liveness in them; bead mimid-f9x4 drafts what one would have
 to say).
 
-## 5. Version 1
+## 5. Version 2
+
+Version 1 was this stream with one compiled-in keepalive interval at each
+end. Version 2 carries the keepalive's two intervals in the hello instead
+(§5.12, bead mimid-mm42), which changes the hello's shape, so `v` is 2 in
+every message but the hellos, which keep their version 1 form (§5.11).
+Version 1 is not spoken: nothing runs in production (§5.2), so there is
+no fallback.
 
 ### 5.1 Endpoint
 
@@ -257,9 +264,9 @@ Error codes are camelCase. A code with the same meaning as a code of
 RFC 8620 or of the draft has that code's name (`invalidArguments`,
 `serverUnavailable`, `forbidden`, `notFound`, `overQuota`,
 `invalidProperties`, `alreadyExists`, `consentNotSent`, ...). The
-stream's own codes are `badMessage`, `unsupportedVersion`,
-`unauthorized`, `cannotResume`, `tooLarge`, `rateLimited` and
-`serverFail`.
+stream's own codes are `badMessage`, `badKeepalive` (§5.12),
+`unsupportedVersion`, `unauthorized`, `cannotResume`, `tooLarge`,
+`rateLimited` and `serverFail`.
 
 At most 16 requests may be outstanding on one connection (INVENTED);
 one more is answered with `rateLimited`, without `retryAfter`, since the
@@ -446,7 +453,7 @@ listed in §5.8 and §5.3.
 
 ### 5.11 Messages
 
-The CDDL (RFC 8610) of version 1. The codec is crates/mimid-live; its
+The CDDL (RFC 8610) of version 2. The codec is crates/mimid-live; its
 fixtures (crates/mimid-live/tests/fixtures) are encoded by hand from
 this text. Every map may carry members not named here; a receiver
 ignores them, and the codec keeps them so they round-trip.
@@ -470,8 +477,18 @@ common = ( "v": uint, "t": tstr )
 ClientHello = {
   "v": 1, "t": "ClientHello",
   "versions": [+ uint],
-  "token": tstr            ; the bearer token (mimid-1wgh.73)
+  "token": tstr,           ; the bearer token (mimid-1wgh.73)
+  ? keepalive              ; both members or neither (§5.12)
 }
+
+; The pair the sender answers as a responder
+; (draft-atwood-mimi-keepalive-00 §4.1). Optional in both hellos, which
+; keep their version 1 form, so a version 1 hello still decodes.
+keepalive = (
+  "minIntervalSeconds": uint,  ; the shortest probe interval answered
+  "maxIdleSeconds": uint       ; the longest idle tolerated;
+                               ; 3 x minIntervalSeconds < maxIdleSeconds
+)
 
 ProviderHello = {
   "v": 1, "t": "ProviderHello",
@@ -493,7 +510,8 @@ ProviderHello = {
   ? "messageRetention": uint, ; seconds; the mimi capability's
                            ; (mimid-1wgh.82); absent: no stated limit
   "fetchesAssets": bool,   ; assetDownloadUrl present
-  "acceptedRooms": bool    ; SetChatAccepted works (mimid-1wgh.63)
+  "acceptedRooms": bool,   ; SetChatAccepted works (mimid-1wgh.63)
+  ? keepalive              ; both members or neither (§5.12)
 }
 
 ; ---- requests: each answered by one Ack or one Error with its id ----
@@ -594,6 +612,57 @@ as on JMAP (draft-atwood-jmap-chat-mimi-00 §application/mimi-fanout,
 stored only for the account that owns the named KeyPackageRef). Unlike
 Agora, they travel on this stream (compare Agora §11, opening).
 
+### 5.12 The keepalive
+
+Each hello states the pair its end answers as a responder, and each end
+probes on the pair the other stated: `minIntervalSeconds`, the shortest
+interval between probes it undertakes to answer, and `maxIdleSeconds`,
+the longest it will leave the carrier open while idle. They are the two
+values of draft-atwood-mimi-keepalive-00 §4.1, held in bead mimid-f9x4;
+this binding is where that draft runs (bead mimid-mm42, decision
+mimid-1wgh.137). The probe stays a WebSocket Ping, so no message is added
+to the binding.
+
+- **The rule** of §4.1, which the decoder enforces, so a hello that
+  breaks it is not a message of this version: three times
+  `minIntervalSeconds` is less than `maxIdleSeconds`. Two probes paced at
+  up to 1.2 of the chosen period account for 2.4 of it; the remaining 0.6
+  is the budget for the second answer. A `ClientHello` that breaks it is
+  `Error` `badKeepalive` and a closed connection; a `ProviderHello` that
+  breaks it ends the agent's hello with an error. One value without the
+  other, a zero and anything past a day are refused the same way.
+- **The pacing** (§4.3). The prober picks a base period P with
+  `minIntervalSeconds <= P` and `3 x P < maxIdleSeconds`, and randomizes
+  each interval between 0.8 and 1.2 of P so that probers do not
+  synchronize. mimid picks the largest such whole second rather than the
+  smallest, so that no interval falls below the interval the responder
+  undertook to answer; bead mimid-f9x4.1 holds why the draft's two rules
+  can disagree about that.
+- **Failure** (§4.4). Two probes unanswered, and the responder's idle
+  tolerance spent, together end the carrier; one unanswered probe is an
+  ordinary event. The rule above makes the pair consistent: by the time
+  the idle tolerance is spent, two probes have gone unanswered. §4.5's
+  revalidation then asks for nothing of its own on this binding: an end
+  that probes continuously has either heard from the other inside its
+  idle tolerance or declared the carrier dead, so traffic only ever goes
+  on a carrier that answered inside it.
+- **A prober with no pair does not probe** (§4.3), having no interval the
+  far end undertook to answer. A provider told nothing by a client is the
+  one exception: it probes that client on the pair it stated in its own
+  `ProviderHello`, a number that client has been told, so a client that
+  states neither value still works.
+- **What mimid offers**, as the provider's `JmapOptions::live_keepalive`
+  and the agent's own pair: `PING_AFTER`, 30 seconds, and `MAX_IDLE`, 120
+  seconds. Both INVENTED, NOT FROM SPEC. A dead carrier is noticed within
+  two minutes rather than within one, which is what the room for the
+  second answer costs. The cadence stays under the 60 seconds where
+  deployed NATs and load balancers reap an idle TCP connection: P is 39
+  seconds here, so the longest jittered interval is 47.
+- **What a Ping asserts** is unchanged: the pipe is there and the far end
+  is reading, not that the provider can serve a request (§4). The draft's
+  own `KeepAliveRequest`, which the serving component must answer, is not
+  on this stream.
+
 ## 6. Later, if needed
 
 Each gets a version bump or new `t` values negotiated in the hello.
@@ -639,7 +708,14 @@ Each gets a version bump or new `t` values negotiated in the hello.
     unknown `t` (answered with its `id`), unknown versions
     (live_stream.rs), and in the codec indefinite lengths,
     non-shortest integers, trailing bytes, deep nesting, invalid UTF-8
-    and every one-byte corruption of a frame (crates/mimid-live/tests).
+    and every one-byte corruption of a frame (crates/mimid-live/tests);
+  - the keepalive (§5.12): the pair at and past the rule's boundary, a
+    zero, half a pair, a value past the cap and `u64::MAX`
+    (crates/mimid-live/tests/hostile.rs); the pacing, the jitter's bounds
+    and the two unanswered probes (crates/mimid-live/tests/keepalive.rs);
+    a `ClientHello` that breaks the rule (`badKeepalive`, closed), a
+    client probed on the pair it stated, and one that states none probed
+    on the provider's (live_stream.rs).
 - **Codec** fixtures from outside the code (§8 step 2).
 
 ## 8. Implementation plan

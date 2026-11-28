@@ -1,10 +1,10 @@
-; Error = {"v": 1, "t": "Error", "id": 9, "code": "epochTooOld", "currentEpoch": 4}
+; Error = {"v": 2, "t": "Error", "id": 9, "code": "epochTooOld", "currentEpoch": 4}
 ; Keys: t, v, id, code, currentEpoch.
 a5                                  ; map, 5 pairs
 61 74                               ; "t"
 65 45 72 72 6f 72                   ; "Error"
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 09                                  ; 9
 64 63 6f 64 65                      ; "code"

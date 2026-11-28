@@ -13,16 +13,24 @@
 //!    is checked by [`Authenticator::authenticate_token`], the code of the
 //!    JMAP `Account` extractor (decision mimid-1wgh.73). The provider
 //!    answers `ProviderHello`, or `Error` (`unsupportedVersion`,
-//!    `unauthorized`) and closes.
-//! 2. Each request runs in its own task, so a slow hub holds up nothing
+//!    `unauthorized`, `badKeepalive`) and closes.
+//! 2. Each hello states the keepalive pair its end answers as a
+//!    responder: the shortest probe interval and the longest idle
+//!    (draft-atwood-mimi-keepalive-00 §4.1, §4.3; decision
+//!    mimid-1wgh.137). The provider probes a quiet connection on the pair
+//!    that connection stated, or on the pair the provider stated itself
+//!    for a client that stated neither, and closes it once two probes
+//!    have gone unanswered for its idle tolerance. A pair with no room
+//!    for two probes and their answers is `Error` `badKeepalive`.
+//! 3. Each request runs in its own task, so a slow hub holds up nothing
 //!    else; its `Ack` or `Error` goes out when it ends (decision
 //!    mimid-1wgh.74). At most [`MAX_OUTSTANDING`] run at once.
-//! 3. `Subscribe` is handled in the connection's own loop: `Deliver`s of
+//! 4. `Subscribe` is handled in the connection's own loop: `Deliver`s of
 //!    what `Message/changes` and `Message/get` give from `since`, then the
 //!    `Ack`; afterwards, on each change-bus event, the `Deliver`s of the
 //!    new Messages and a `Position` (decision mimid-1wgh.75), and a
 //!    `Changed` when the Chat, KeyPackage or Consent state moved.
-//! 4. The token is checked again before each request and each run of
+//! 5. The token is checked again before each request and each run of
 //!    `Deliver`s; once it fails the provider sends `Error` `unauthorized`
 //!    without `id` and closes. A revocation of the token
 //!    ([`Store::revoke_token_id`](crate::store::Store::revoke_token_id))
@@ -56,10 +64,11 @@ use futures_util::{SinkExt, StreamExt};
 use jmap_server::JmapError;
 use mimi_mls::tls_codec::{Deserialize, Serialize};
 use mimi_protocol::{GroupInfoCode, KeyMaterialResponse, SubmitResult, UpdateResult};
+use mimid_live::keepalive::{Outcome, Prober};
 use mimid_live::{
-    AckResult, ChatEntry, ClientEntry, ClientMessage, ConsentEntry, Deliver, ErrorMessage,
-    KeyPackageEntry, MAX_MESSAGE_BYTES, MAX_OUTSTANDING, MAX_REQUEST_BYTES, Op, Position,
-    ProviderHello, ProviderMessage, VERSION, code,
+    AckResult, ChatEntry, ClientEntry, ClientMessage, ConsentEntry, DecodeError, Deliver,
+    ErrorMessage, Keepalive, KeyPackageEntry, MAX_MESSAGE_BYTES, MAX_OUTSTANDING,
+    MAX_REQUEST_BYTES, Op, Position, ProviderHello, ProviderMessage, VERSION, code,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -172,15 +181,19 @@ async fn connection(state: JmapState, socket: WebSocket) {
         let _ = sink.close().await;
     });
     let sender = Sender(out);
-    if let Some((account, token)) = hello(&state, &sender, &mut source).await {
-        let ping_after = state.0.live_ping_after;
+    if let Some(Opened {
+        account,
+        token,
+        keepalive,
+    }) = hello(&state, &sender, &mut source).await
+    {
         Connection {
             state,
             sender: sender.clone(),
             account,
             token,
             outstanding: Arc::new(AtomicUsize::new(0)),
-            ping_after,
+            keepalive,
         }
         .run(&mut source)
         .await;
@@ -226,13 +239,20 @@ async fn next_frame(source: &mut Source, sender: &Sender) -> Option<Frame> {
     }
 }
 
-/// The hello exchange: the authenticated account and its token, or
-/// `None` after the refusal was sent.
-async fn hello(
-    state: &JmapState,
-    sender: &Sender,
-    source: &mut Source,
-) -> Option<(Account, String)> {
+/// What the hello exchange settled.
+struct Opened {
+    account: Account,
+    token: String,
+    /// The pair this connection is probed on: what its `ClientHello`
+    /// stated, or the pair the provider stated itself for a client that
+    /// stated neither (draft-atwood-mimi-keepalive-00 §4.3; decision
+    /// mimid-1wgh.137).
+    keepalive: Keepalive,
+}
+
+/// The hello exchange: what it settled, or `None` after the refusal was
+/// sent.
+async fn hello(state: &JmapState, sender: &Sender, source: &mut Source) -> Option<Opened> {
     // One deadline for the whole exchange, not one per read: a client
     // that sent nothing but Pings would otherwise hold the connection
     // open for as long as it liked.
@@ -254,6 +274,18 @@ async fn hello(
     }
     let hello = match ClientMessage::decode(&frame) {
         Ok(ClientMessage::Hello(hello)) => hello,
+        // A pair with no room for two probes and their answers has its
+        // own code: the client's hello was well formed and its numbers
+        // were not (draft-atwood-mimi-keepalive-00 §4.1; bead
+        // mimid-mm42).
+        Err(error) if matches!(error.error, DecodeError::Keepalive(_)) => {
+            tracing::debug!(
+                error = &error as &dyn std::error::Error,
+                "live stream: the ClientHello's keepalive is not usable"
+            );
+            sender.fail(code::BAD_KEEPALIVE).await;
+            return None;
+        }
         Ok(ClientMessage::Request(_)) | Err(_) => {
             tracing::debug!("live stream: the first frame is not a ClientHello");
             sender.fail(code::BAD_MESSAGE).await;
@@ -292,13 +324,30 @@ async fn hello(
             .and_then(crate::follower::key_packages::KeyPackages::max_clients),
         fetches_assets: true,
         accepted_rooms: true,
+        keepalive: Some(state.0.live_keepalive),
         extra: Vec::new(),
     });
     if !sender.send(&welcome).await {
         return None;
     }
     tracing::debug!(account_id = account.account_id(), "live stream opened");
-    Some((account, hello.token))
+    Some(Opened {
+        account,
+        token: hello.token,
+        // A client that stated neither value is probed on the pair the
+        // provider just stated: a number that client has been told, not a
+        // default invented here (decision mimid-1wgh.137).
+        keepalive: hello.keepalive.unwrap_or(state.0.live_keepalive),
+    })
+}
+
+/// Sleeps one quiet period, or forever for a prober that must not probe
+/// (draft-atwood-mimi-keepalive-00 §4.3).
+async fn quiet(wait: Option<Duration>) {
+    match wait {
+        Some(wait) => tokio::time::sleep(wait).await,
+        None => std::future::pending().await,
+    }
 }
 
 fn rejection_code(rejection: AuthRejection) -> &'static str {
@@ -314,9 +363,9 @@ struct Connection {
     account: Account,
     token: String,
     outstanding: Arc<AtomicUsize>,
-    /// How long this connection may be quiet before it is probed
-    /// ([`JmapOptions::live_ping_after`](super::JmapOptions)).
-    ping_after: std::time::Duration,
+    /// The pair this connection is probed on: what its `ClientHello`
+    /// stated (draft-atwood-mimi-keepalive-00 §4.3).
+    keepalive: Keepalive,
 }
 
 /// The subscription of a connection: the last Message state sent and the
@@ -333,9 +382,15 @@ impl Connection {
         let mut changes = self.state.0.bus.subscribe();
         let mut subscription: Option<Subscription> = None;
         let mut stop = self.state.0.stop.clone();
-        // Whether a Ping is outstanding: set when one goes out, cleared
-        // by anything received.
-        let mut probed = false;
+        // The probe pacing of the pair this client stated: the intervals
+        // of draft-atwood-mimi-keepalive-00 §4.3, jittered from a seed of
+        // this connection's own, and its §4.4 failure rule. A seed the
+        // system's randomness refuses costs the desynchronization and
+        // nothing else, so it is not worth failing the connection for.
+        let seed = mimi_mls::label::random_array::<8>()
+            .map(u64::from_le_bytes)
+            .unwrap_or_default();
+        let mut prober = Prober::new(Some(self.keepalive), seed);
         loop {
             let stopping = async {
                 match stop.as_mut() {
@@ -357,28 +412,33 @@ impl Connection {
                     self.sender.fail(code::UNAUTHORIZED).await;
                     return;
                 }
-                // A quiet connection is probed, and one that has said
-                // nothing since the previous probe is dead: a reaped
-                // carrier and a crashed agent look the same from here,
-                // and both end the same way (decision mimid-1wgh.133).
-                // The sleep starts again on every turn of this loop, so
-                // a connection that is doing work is never probed.
-                () = tokio::time::sleep(self.ping_after) => {
-                    if probed {
+                // A quiet connection is probed, and one that has answered
+                // neither of two probes within the idle tolerance it
+                // stated is dead: a reaped carrier and a crashed agent
+                // look the same from here, and both end the same way
+                // (decision mimid-1wgh.133,
+                // draft-atwood-mimi-keepalive-00 §4.4). The sleep starts
+                // again on every turn of this loop, so a connection that
+                // is doing work is never probed.
+                () = quiet(prober.wait()) => {
+                    let outcome = prober.quiet();
+                    if outcome == Outcome::Dead {
                         tracing::debug!(
                             account_id = self.account.account_id(),
-                            "live stream closed: no answer to the Ping"
+                            "live stream closed: no answer to the Pings"
                         );
                         return;
                     }
-                    if !self.sender.ping() {
+                    // Anything but a probe is a prober with no pair,
+                    // which this one has: its wait would be None, and
+                    // this arm would wait forever.
+                    if outcome == Outcome::Probe && !self.sender.ping() {
                         return;
                     }
-                    probed = true;
                 }
                 frame = next_frame(source, &self.sender) => {
                     let Some(frame) = frame else { return };
-                    probed = false;
+                    prober.heard();
                     if let Frame::Binary(frame) = frame
                         && !self.frame(&frame, &mut subscription).await
                     {

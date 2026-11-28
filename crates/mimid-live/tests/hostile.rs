@@ -2,7 +2,8 @@
 //! mimid-1wgh.76), and nothing panics.
 
 use mimid_live::cbor::{self, CborError, MAX_DEPTH, Value};
-use mimid_live::{ClientMessage, DecodeError, OpKind, ProviderMessage};
+use mimid_live::keepalive::{KeepaliveError, MAX_KEEPALIVE_SECONDS};
+use mimid_live::{ClientMessage, DecodeError, Keepalive, OpKind, ProviderMessage, VERSION};
 
 fn text(t: &str) -> Vec<u8> {
     cbor::encode(&Value::Text(t.to_owned()))
@@ -14,7 +15,7 @@ fn subscribe_with(pairs: usize, extra: &[u8]) -> Vec<u8> {
     out.extend(text("t"));
     out.extend(text("Subscribe"));
     out.extend(text("v"));
-    out.push(0x01);
+    out.push(0x02);
     out.extend(text("id"));
     out.push(0x07);
     out.extend(extra);
@@ -23,6 +24,174 @@ fn subscribe_with(pairs: usize, extra: &[u8]) -> Vec<u8> {
 
 fn client_error(bytes: &[u8]) -> DecodeError {
     ClientMessage::decode(bytes).unwrap_err().error
+}
+
+/// A `ClientHello` carrying `pairs` besides the members every hello has.
+/// [`cbor::encode`] sorts the keys, so the frame is well formed whatever
+/// order they are given in.
+fn client_hello_with(pairs: &[(&str, Value)]) -> Vec<u8> {
+    let mut map = vec![
+        (Value::Text("v".to_owned()), Value::Uint(1)),
+        (
+            Value::Text("t".to_owned()),
+            Value::Text("ClientHello".to_owned()),
+        ),
+        (
+            Value::Text("versions".to_owned()),
+            Value::Array(vec![Value::Uint(VERSION)]),
+        ),
+        (
+            Value::Text("token".to_owned()),
+            Value::Text("tok".to_owned()),
+        ),
+    ];
+    map.extend(
+        pairs
+            .iter()
+            .map(|(key, value)| (Value::Text((*key).to_owned()), value.clone())),
+    );
+    cbor::encode(&Value::Map(map))
+}
+
+/// A hello stating `min` and `max`.
+fn hello_keepalive(min: u64, max: u64) -> Vec<u8> {
+    client_hello_with(&[
+        ("minIntervalSeconds", Value::Uint(min)),
+        ("maxIdleSeconds", Value::Uint(max)),
+    ])
+}
+
+/// The pair a hello decoded to.
+fn decoded_keepalive(bytes: &[u8]) -> Option<Keepalive> {
+    match ClientMessage::decode(bytes) {
+        Ok(ClientMessage::Hello(hello)) => hello.keepalive,
+        other => panic!("not a ClientHello: {other:?}"),
+    }
+}
+
+/// Bead mimid-mm42: `PROBES_PER_IDLE * minIntervalSeconds` must be under
+/// `maxIdleSeconds` (draft-atwood-mimi-keepalive-00 §4.1), checked at
+/// parse time, at the boundary and past it.
+#[test]
+fn a_hello_whose_keepalive_leaves_no_room_for_two_probes_is_refused() {
+    for (min, max) in [(30, 90), (30, 30), (1, 3), (2, 6), (1, 1)] {
+        assert_eq!(
+            client_error(&hello_keepalive(min, max)),
+            DecodeError::Keepalive(KeepaliveError::NoRoom { min, max }),
+            "{min} and {max}"
+        );
+    }
+    // One second more than the refused pair is the first accepted one.
+    for (min, max) in [(30, 91), (1, 4), (2, 7)] {
+        assert_eq!(
+            decoded_keepalive(&hello_keepalive(min, max)),
+            Some(Keepalive::new(min, max).unwrap()),
+            "{min} and {max}"
+        );
+    }
+}
+
+/// A responder states both values as non-zero (§4.1).
+#[test]
+fn a_hello_whose_keepalive_is_zero_is_refused() {
+    assert_eq!(
+        client_error(&hello_keepalive(0, 10)),
+        DecodeError::Keepalive(KeepaliveError::Zero {
+            name: "minIntervalSeconds"
+        })
+    );
+    assert_eq!(
+        client_error(&hello_keepalive(10, 0)),
+        DecodeError::Keepalive(KeepaliveError::Zero {
+            name: "maxIdleSeconds"
+        })
+    );
+    assert_eq!(
+        client_error(&hello_keepalive(0, 0)),
+        DecodeError::Keepalive(KeepaliveError::Zero {
+            name: "minIntervalSeconds"
+        })
+    );
+}
+
+/// [`MAX_KEEPALIVE_SECONDS`] at the limit and past it, up to the largest
+/// integer the wire can carry: the arithmetic of §4.1 does not overflow.
+#[test]
+fn a_keepalive_past_the_limit_is_refused() {
+    assert_eq!(
+        decoded_keepalive(&hello_keepalive(1, MAX_KEEPALIVE_SECONDS)),
+        Some(Keepalive::new(1, MAX_KEEPALIVE_SECONDS).unwrap())
+    );
+    for (min, max, name, seconds) in [
+        (
+            1,
+            MAX_KEEPALIVE_SECONDS + 1,
+            "maxIdleSeconds",
+            MAX_KEEPALIVE_SECONDS + 1,
+        ),
+        (
+            MAX_KEEPALIVE_SECONDS + 1,
+            MAX_KEEPALIVE_SECONDS,
+            "minIntervalSeconds",
+            MAX_KEEPALIVE_SECONDS + 1,
+        ),
+        (u64::MAX, u64::MAX, "minIntervalSeconds", u64::MAX),
+        (1, u64::MAX, "maxIdleSeconds", u64::MAX),
+    ] {
+        assert_eq!(
+            client_error(&hello_keepalive(min, max)),
+            DecodeError::Keepalive(KeepaliveError::TooLong { name, seconds }),
+            "{min} and {max}"
+        );
+    }
+}
+
+/// One of the pair alone states no pacing, so it is refused rather than
+/// half believed (§4.1).
+#[test]
+fn a_hello_stating_half_the_keepalive_is_refused() {
+    assert_eq!(
+        client_error(&client_hello_with(&[(
+            "minIntervalSeconds",
+            Value::Uint(30)
+        )])),
+        DecodeError::Keepalive(KeepaliveError::Half {
+            present: "minIntervalSeconds",
+            missing: "maxIdleSeconds",
+        })
+    );
+    assert_eq!(
+        client_error(&client_hello_with(&[("maxIdleSeconds", Value::Uint(120))])),
+        DecodeError::Keepalive(KeepaliveError::Half {
+            present: "maxIdleSeconds",
+            missing: "minIntervalSeconds",
+        })
+    );
+}
+
+/// A client that states neither value: the hello decodes, with no pair
+/// (bead mimid-mm42's compatibility requirement).
+#[test]
+fn a_hello_stating_no_keepalive_decodes() {
+    assert_eq!(decoded_keepalive(&client_hello_with(&[])), None);
+}
+
+#[test]
+fn a_keepalive_of_the_wrong_type_is_refused() {
+    for name in ["minIntervalSeconds", "maxIdleSeconds"] {
+        let bytes = client_hello_with(&[
+            (name, Value::Text("30".to_owned())),
+            (
+                if name == "maxIdleSeconds" {
+                    "minIntervalSeconds"
+                } else {
+                    "maxIdleSeconds"
+                },
+                Value::Uint(120),
+            ),
+        ]);
+        assert_eq!(client_error(&bytes), DecodeError::WrongType(name));
+    }
 }
 
 #[test]
@@ -63,7 +232,7 @@ fn a_non_shortest_id_is_refused() {
     out.extend(text("t"));
     out.extend(text("Subscribe"));
     out.extend(text("v"));
-    out.push(0x01);
+    out.push(0x02);
     out.extend(text("id"));
     out.extend([0x18, 0x07]);
     assert_eq!(
@@ -190,17 +359,25 @@ fn unknown_type_and_version_are_named() {
     out.extend(text("t"));
     out.extend(text("Teleport"));
     out.extend(text("v"));
-    out.push(0x01);
+    out.push(0x02);
     out.extend(text("id"));
     out.push(0x05);
     let error = ClientMessage::decode(&out).unwrap_err();
     assert_eq!(error.id, Some(5), "the id is reported for the Error answer");
     assert_eq!(error.error, DecodeError::UnknownType("Teleport".to_owned()));
 
-    let mut out = subscribe_with(0, &[]);
-    let at = out.iter().position(|&b| b == 0x01).unwrap();
-    out[at] = 0x02;
-    assert_eq!(client_error(&out), DecodeError::UnknownVersion(2));
+    // Version 1, which this crate no longer speaks (bead mimid-mm42),
+    // and a version after it.
+    for (byte, version) in [(0x01, 1), (0x03, 3)] {
+        let mut out = vec![0xa3];
+        out.extend(text("t"));
+        out.extend(text("Subscribe"));
+        out.extend(text("v"));
+        out.push(byte);
+        out.extend(text("id"));
+        out.push(0x07);
+        assert_eq!(client_error(&out), DecodeError::UnknownVersion(version));
+    }
 }
 
 #[test]
@@ -225,7 +402,7 @@ fn an_ack_of_no_outstanding_request_is_refused() {
     out.extend(text("t"));
     out.extend(text("Ack"));
     out.extend(text("v"));
-    out.push(0x01);
+    out.push(0x02);
     out.extend(text("id"));
     out.push(0x05);
     out.extend(text("state"));

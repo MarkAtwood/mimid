@@ -22,11 +22,19 @@
 //! - [`Stream::close`] closes the connection and waits for its reader and
 //!   writer tasks to end (docs/design/purple-mimi.md §6.4); later calls
 //!   fail instead of connecting again.
+//! - The keepalive: the `ClientHello` states the pair the agent answers
+//!   as a responder, and the writer task probes a quiet connection on the
+//!   pair the `ProviderHello` stated, giving up once two probes have gone
+//!   unanswered for the provider's idle tolerance
+//!   (draft-atwood-mimi-keepalive-00 §4.3, §4.4; decisions
+//!   mimid-1wgh.133, mimid-1wgh.137).
 //!
 //! # Limitations
 //!
 //! - The reader task runs on the caller's Tokio runtime
 //!   (`tokio::spawn`).
+//! - A provider that states no keepalive pair is not probed, so a carrier
+//!   it has stopped reading is noticed only when a request times out.
 //! - Requests outstanding when the connection fails get an error; they
 //!   are not sent again, as on JMAP.
 
@@ -36,8 +44,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use mimid_live::keepalive::{Outcome, Prober};
 use mimid_live::{
-    AckResult, ClientHello, ClientMessage, ErrorMessage, MAX_MESSAGE_BYTES, Op, OpKind,
+    AckResult, ClientHello, ClientMessage, ErrorMessage, Keepalive, MAX_MESSAGE_BYTES, Op, OpKind,
     ProviderHello, ProviderMessage, Request, VERSION, code,
 };
 use mimid_telemetry::refusals::Refusal;
@@ -111,6 +120,15 @@ struct Connection {
     tasks: Mutex<Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>>,
 }
 
+/// Sleeps one quiet period, or forever for a prober that must not probe
+/// (draft-atwood-mimi-keepalive-00 §4.3).
+async fn quiet(wait: Option<Duration>) {
+    match wait {
+        Some(wait) => tokio::time::sleep(wait).await,
+        None => std::future::pending().await,
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -166,6 +184,10 @@ impl Connection {
         let hello = ClientMessage::Hello(ClientHello {
             versions: vec![VERSION],
             token: token.to_owned(),
+            // What the agent answers as a responder, which is what the
+            // provider probes it on (draft-atwood-mimi-keepalive-00
+            // §4.1, §4.3; decision mimid-1wgh.137).
+            keepalive: Some(Keepalive::default()),
             extra: Vec::new(),
         });
         sink.send(Message::Binary(hello.encode().into()))
@@ -205,16 +227,30 @@ impl Connection {
         });
         let (out, mut queue) = mpsc::channel::<Out>(OUT_BUFFER);
         let writer_shared = Arc::clone(&shared);
+        // The pacing of the pair the provider stated: the intervals of
+        // draft-atwood-mimi-keepalive-00 §4.3 and its §4.4 failure rule,
+        // jittered from a seed of this carrier's own. A provider that
+        // stated no pair is not probed at all, there being no interval it
+        // undertook to answer (decision mimid-1wgh.137). A seed the
+        // system's randomness refuses costs the desynchronization and
+        // nothing else.
+        let seed = mimi_mls::label::random_array::<8>()
+            .map(u64::from_le_bytes)
+            .unwrap_or_default();
+        let mut prober = Prober::new(hello.keepalive, seed);
         let writer = tokio::spawn(async move {
-            // The count of frames heard when the last Ping went out, or
-            // `None` while none is outstanding. A stream with nothing to
-            // say is probed every PING_AFTER; one that has said nothing
-            // by the next probe is gone, whether the agent's carrier was
-            // reaped by a middlebox or the provider died (decision
-            // mimid-1wgh.133). The sleep starts again whenever this
-            // writer sends something, so a busy stream is never probed.
-            let mut probed: Option<u64> = None;
+            // The count of frames heard when this writer last looked, so
+            // it can tell whether anything arrived meanwhile. A stream
+            // with nothing to say is probed on the provider's interval;
+            // one that has answered neither of two probes
+            // within the provider's idle tolerance is gone, whether the
+            // agent's carrier was reaped by a middlebox or the provider
+            // died (decision mimid-1wgh.133). The sleep starts again
+            // whenever this writer sends something, so a busy stream is
+            // never probed.
+            let mut probed = writer_shared.heard.load(Ordering::SeqCst);
             loop {
+                let wait = prober.wait();
                 tokio::select! {
                     out = queue.recv() => {
                         let Some(Out::Frame(frame)) = out else {
@@ -224,18 +260,28 @@ impl Connection {
                             break;
                         }
                     }
-                    () = tokio::time::sleep(mimid_live::PING_AFTER) => {
+                    () = quiet(wait) => {
                         let heard = writer_shared.heard.load(Ordering::SeqCst);
-                        if probed == Some(heard) {
-                            tracing::debug!(
-                                "the live stream answered no Ping; closing it"
-                            );
-                            break;
+                        if heard != probed {
+                            probed = heard;
+                            prober.heard();
+                            continue;
                         }
-                        if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
-                            break;
+                        match prober.quiet() {
+                            Outcome::Dead => {
+                                tracing::debug!(
+                                    "the live stream answered no Ping; closing it"
+                                );
+                                break;
+                            }
+                            Outcome::Probe => {
+                                if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            // A prober with no pair, whose wait is None.
+                            _ => continue,
                         }
-                        probed = Some(heard);
                     }
                 }
             }

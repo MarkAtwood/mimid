@@ -1,4 +1,4 @@
-# PROVENANCE: mimid live stream v1 fixtures (bead mimid-e64f.2)
+# PROVENANCE: mimid live stream v2 fixtures (bead mimid-e64f.2)
 #
 # Source: hand-encoded on 2026-11-20 from the CDDL of
 # docs/design/binary-live-stream.md §5.11, byte by byte, with a comment on
@@ -29,29 +29,38 @@
 # provider-hello-max-kp-lifetime.hex likewise, from maxKeyPackageLifetime
 # (clean-room finding C4).
 #
+# client-hello-keepalive.hex and provider-hello-keepalive.hex were added
+# on 2026-11-27 the same way, by hand from the CDDL's keepalive pair
+# (bead mimid-mm42; draft-atwood-mimi-keepalive-00 §4.1). The same bead
+# raised the stream's version to 2, so `v` is 02 in every fixture but the
+# hellos, which keep their version 1 form; the hex of that one member was
+# edited by hand in each file and the files are otherwise unchanged.
+#
 # fixtures.rs decodes each file, compares it to the value written out in
 # the test, encodes it again and requires the same bytes.
 #
 # SHA-256:
-#   524bf9ce6d4fa7b95f2232a7c3ab19e411d55e24793250d07c3dfcf4bca97280  ack-create-consent.hex
-#   3a900cbb860b356b77ffb14a282eb238c137f5f0ed84e0bc002b5c47c5ec6a91  ack-list-chats.hex
-#   f6f55724e33c5724c7a8a149d182dba95d8b6fbeaad0d3acc67b3bafe395e908  ack-list-clients.hex
-#   3bfb19aaa8534831c8d1216e42adc665a035b44bbd893c58fca3356ed3e4ef1c  ack-send-message-ids.hex
-#   0332d9730ff9c136b7a22e6ac3ee984104b82653be50828aff656439d41f3bc7  ack-send.hex
-#   4448603244533eaeeb8fab9f398b95123952a414398402de2a2b41b66bdcac4d  changed.hex
+#   73f178eef8ed33c865f55ec0f2855371f04521fd5b2f80a4b2be32b548ebc05d  ack-create-consent.hex
+#   f7dd793e67b7f0c14406a2ef7637172e58c702cf4cd6c36af0700cf49d3a67c7  ack-list-chats.hex
+#   4947f7d02ad78b4c6adda2daa16d135cab882254a80534b710bcdf0993dc6b62  ack-list-clients.hex
+#   864421e0edce2aff3fde075f9a4bc6e563710b83655ee3f3d2bbcf8189572cb1  ack-send.hex
+#   e5cf6d86bae933de2ad1caa33fd9227bb5c020fcfebcd8a7868ce0d52205f666  ack-send-message-ids.hex
+#   35e4cb99f38eb33b34ab5002b5a837bdc11dda20ce11db48c2961b2fe195018f  changed.hex
 #   9df82e52bee56e89af8db01e7f544a592d069d0a4ff8e0dfd3cd65e0bfa307e5  client-hello.hex
-#   3b6ae4f2fe27cad6532aea42360a07a5060dfe6978ea61f5e0d63c3db2c4d52d  deliver.hex
-#   2d7e9beb80f4efa1fb5814a42543a81f08c1e07d763a90ae7c7b84177c373a32  error-epoch-too-old.hex
-#   0c1369d9468ada985fa86d6c8b893f59d4a12b55ae05b9d83ae4d5f873e8c074  error-rate-limited.hex
-#   6abc6478184f90b1449c3d54acb43e5d5b82cf0a7ce21a7e201df248a4f8d966  position-unknown-member.hex
+#   8592c0e9c8370b090622af4855a018b8988e803b1f1fef835de23eb7ad093ec2  client-hello-keepalive.hex
+#   53036a2d47e95722dc2593b19a31359bc9411c4509c7b4dfa8501044ada5a51a  deliver.hex
+#   e68e4d74350418c20d038f11d4b38ddb7f6db123faac339f7b52bb3feee1620b  error-epoch-too-old.hex
+#   0abafc412c32e3de13c522833c67a4bf99463795480b330f14ceb40f7db7840a  error-rate-limited.hex
+#   dfadeaffe0834c89484125fb92cc0f07b8a693dc42cacd95bff71c8ccd6d5360  position-unknown-member.hex
+#   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
+#   1702542c5d38cdb066333af1b25844d5cb60fd35eb3be7f3ec88ae25677e7930  provider-hello-keepalive.hex
 #   38831155dd165e5505d703638917335f0b455088a43e90db7dc4796f9fea0638  provider-hello-max-clients.hex
 #   fa22a70823ded903c750e26e98ff74e1147ebc107a007cb37dbac772dbe450c7  provider-hello-max-kp-lifetime.hex
 #   14f7167f3f7c59358640ab9120f86c285216e5c0c29695478c25c1102e1066e0  provider-hello-retention.hex
-#   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
-#   0620fb1af329dd4cfee651f3c7a3fc1d5df28c2dcb52c4944cea54cac12fc796  send-silent.hex
-#   ff60363aa1b6173cd384a4affa94a775f5c8b1f29eaf32d45869b83bcfe52c46  send.hex
-#   020ab711749650cd7cf81c6cc40e75633b2e1582113d60ae7506864d29437ddc  subscribe-after.hex
-#   226ac5ca7a09d81db7f808c0da2d0aae586b7dd98ecb52927177cc9c060bde21  subscribe.hex
-#   238142743658b9ad51d79d3b5bcffcec0a5c8a14968669a7d9715fc45e381c4d  update-consent.hex
+#   c2c3f3b61dd0e398f5bd063192b8affc1b1cc0842aec03df6b6da0da8c976363  send.hex
+#   6015d1aa6deb08f5d7152afe1ff24b18e552d7278d947be0b8cccb29577bf426  send-silent.hex
+#   1b8cb18b90e57a39030120e5d65747ca84805439bb3f19cd7a9c14c822304b8c  subscribe.hex
+#   621d72a7acaaaac744e1705123d9ae5733c6fecfaa599f9997e81ae746638ad1  subscribe-after.hex
+#   7edfcc14826051d9652aa42963e790f8e6add2808fa6fea605df1a9aab3f50dd  update-consent.hex
 #   03c559c084749c2f31a9c584e740fc646fd0e94e450a683b58c91edade53b125  oracle/cbor2_check.py
-#   6be5cd1234d1e724dfdbed3457a43bd95d5daaafd5c1153ac01c56d6a035cded  oracle/cbor2_check.out
+#   89fd2db2c54f9744e1ee8de9e0c4bde368ac9801d0c1eb80607e8949f5453ab9  oracle/cbor2_check.out

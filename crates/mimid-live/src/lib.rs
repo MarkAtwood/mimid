@@ -15,11 +15,21 @@
 //!   that order.
 //! - Members the CDDL does not name are kept in each message's `extra`
 //!   and written back.
+//! - [`keepalive`] carries the two intervals each end states in its hello
+//!   and the pacing both ends probe by (draft-atwood-mimi-keepalive-00
+//!   §4.1, §4.3; decision mimid-1wgh.137). The probe itself is the
+//!   caller's: a WebSocket Ping (decision mimid-1wgh.133).
 //!
 //! The crate is synchronous and pure: no I/O.
 //!
 //! # Limitations
 //!
+//! - A prober holds one pair for the life of a carrier: nothing here
+//!   restates it, as draft-atwood-mimi-keepalive-00 §4.3 lets a responder
+//!   do, because the live stream has no message that could.
+//! - [`keepalive::Prober`] counts the quiet periods it was told elapsed;
+//!   it reads no clock, so a caller that arms it with one wait and sleeps
+//!   another gets the idle tolerance it slept.
 //! - Floats, tags, `undefined` and other simple values are refused even
 //!   inside unknown members, so a later version cannot add one without a
 //!   new version number.
@@ -33,9 +43,11 @@
 
 pub mod cbor;
 mod fields;
+pub mod keepalive;
 mod message;
 
 pub use fields::Extra;
+pub use keepalive::{Keepalive, KeepaliveError};
 pub use message::{
     Ack, AckResult, Changed, ChatEntry, ClientEntry, ClientHello, ClientMessage, ConsentEntry,
     Deliver, ErrorMessage, KeyPackageEntry, Op, OpKind, Position, ProviderHello, ProviderMessage,
@@ -44,8 +56,11 @@ pub use message::{
 
 use std::time::Duration;
 
-/// The stream version this crate speaks (`v`).
-pub const VERSION: u64 = 1;
+/// The stream version this crate speaks (`v`). Version 2 carries the
+/// keepalive's two intervals in the hello (bead mimid-mm42; decision
+/// mimid-1wgh.137); version 1 baked one constant into both ends and is
+/// not spoken.
+pub const VERSION: u64 = 2;
 
 /// The largest frame in either direction: 16 MiB, mimid's largest blob,
 /// plus 64 KiB (decision mimid-1wgh.78). INVENTED, NOT FROM SPEC.
@@ -63,18 +78,32 @@ pub const MAX_REQUEST_BYTES: usize = 2 * 4 * 1024 * 1024 + 64 * 1024;
 /// (decision mimid-1wgh.78). INVENTED, NOT FROM SPEC.
 pub const MAX_OUTSTANDING: usize = 16;
 
-/// How long either end lets the connection go quiet before it sends a
-/// WebSocket Ping, and how long it then waits: nothing received by the
-/// next probe ends the connection, so a dead carrier is noticed within
-/// twice this (decision mimid-1wgh.133). INVENTED, NOT FROM SPEC, and
-/// not MIMI's: MIMI defines no keepalive at all, so this is the
-/// transport's own (RFC 6455 §5.5.2), which proves the far end's read
-/// loop is turning and nothing more.
+/// The `minIntervalSeconds` mimid offers by default: the shortest
+/// interval between probes it undertakes to answer
+/// (draft-atwood-mimi-keepalive-00 §4.1). What either end probes on is
+/// the pair the far end stated in its hello ([`Keepalive`]), not this;
+/// this is what mimid states when it is the responder (decision
+/// mimid-1wgh.137). INVENTED, NOT FROM SPEC: the draft states no default,
+/// and the probe itself is the transport's (RFC 6455 §5.5.2; decision
+/// mimid-1wgh.133), which proves the far end's read loop is turning and
+/// nothing more.
 ///
 /// Chosen under 60 seconds because that is where deployed NATs and load
 /// balancers reap an idle TCP connection, whatever RFC 5382 §5 asked
 /// for.
 pub const PING_AFTER: Duration = Duration::from_secs(30);
+
+/// The `maxIdleSeconds` mimid offers by default: the longest it leaves an
+/// idle carrier open (draft-atwood-mimi-keepalive-00 §4.1). INVENTED, NOT
+/// FROM SPEC.
+///
+/// Two minutes, because the idle tolerance must hold two probes and the
+/// second answer: [`keepalive::PROBES_PER_IDLE`] times [`PING_AFTER`] is
+/// 90 seconds, so a dead carrier is noticed within two minutes rather
+/// than within one. The probe cadence stays under the 60 seconds where a
+/// NAT reaps an idle carrier: the period [`Keepalive::period`] picks here
+/// is 39 seconds and the jitter takes it to at most 47.
+pub const MAX_IDLE: Duration = Duration::from_secs(120);
 
 /// The endpoint path, relative to the provider's base URL (decision
 /// mimid-1wgh.77). INVENTED, NOT FROM SPEC.
@@ -93,6 +122,9 @@ pub const SESSION_CAPABILITY: &str = "tag:reviewcommit.com,2026:mimid:live";
 pub mod code {
     #![allow(missing_docs, reason = "each is the code of the same name")]
     pub const BAD_MESSAGE: &str = "badMessage";
+    /// A hello whose keepalive pair is not usable
+    /// (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42).
+    pub const BAD_KEEPALIVE: &str = "badKeepalive";
     pub const UNSUPPORTED_VERSION: &str = "unsupportedVersion";
     pub const UNAUTHORIZED: &str = "unauthorized";
     pub const CANNOT_RESUME: &str = "cannotResume";
@@ -136,6 +168,12 @@ pub enum DecodeError {
     /// A member's value is not allowed.
     #[error("{0}")]
     Invalid(&'static str),
+    /// A hello's keepalive pair is not usable, so the hello is not a
+    /// message of this version (draft-atwood-mimi-keepalive-00 §4.1;
+    /// bead mimid-mm42). The provider answers this one
+    /// [`code::BAD_KEEPALIVE`].
+    #[error(transparent)]
+    Keepalive(#[from] KeepaliveError),
     /// An `Ack` of no outstanding request.
     #[error("an Ack of request {0}, which is not outstanding")]
     UnknownRequest(u64),

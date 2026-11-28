@@ -1,12 +1,12 @@
 ; Subscribe without since, after the last handled Message of a Chat
 ; (findings log F12) =
-;   {"v": 1, "t": "Subscribe", "id": 8, "after": {"C1": "M9"}}
+;   {"v": 2, "t": "Subscribe", "id": 8, "after": {"C1": "M9"}}
 ; Keys: t, v, id, after.
 a4                                  ; map, 4 pairs
 61 74                               ; "t"
 69 53 75 62 73 63 72 69 62 65       ; "Subscribe" (9)
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 08                                  ; 8
 65 61 66 74 65 72                   ; "after"

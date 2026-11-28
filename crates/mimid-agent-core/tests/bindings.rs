@@ -463,8 +463,9 @@ async fn a_membership_change_while_subscribed() {
     );
     let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
     let hello = ClientMessage::Hello(ClientHello {
-        versions: vec![1],
+        versions: vec![mimid_live::VERSION],
         token: server.tokens[BOB].clone(),
+        keepalive: Some(mimid_live::Keepalive::default()),
         extra: Vec::new(),
     });
     socket
@@ -476,7 +477,7 @@ async fn a_membership_change_while_subscribed() {
         ProviderMessage::Hello(_)
     ));
     let subscribe = ClientMessage::Request(Request {
-        v: 1,
+        v: mimid_live::VERSION,
         id: 1,
         op: Op::Subscribe {
             since: None,

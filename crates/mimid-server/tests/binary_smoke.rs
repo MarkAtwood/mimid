@@ -672,12 +672,13 @@ async fn an_open_live_stream_does_not_block_sigterm() {
     let url = format!("ws://{}{}", addrs.listen, mimid_live::PATH);
     let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
     let hello = mimid_live::ClientMessage::Hello(mimid_live::ClientHello {
-        versions: vec![1],
+        versions: vec![mimid_live::VERSION],
         token,
+        keepalive: Some(mimid_live::Keepalive::default()),
         extra: Vec::new(),
     });
     let subscribe = mimid_live::ClientMessage::Request(mimid_live::Request {
-        v: 1,
+        v: mimid_live::VERSION,
         id: 1,
         op: mimid_live::Op::Subscribe {
             since: None,

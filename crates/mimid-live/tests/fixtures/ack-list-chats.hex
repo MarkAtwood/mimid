@@ -1,4 +1,4 @@
-; Ack of a ListChats = {"v": 1, "t": "Ack", "id": 5, "state": "s1",
+; Ack of a ListChats = {"v": 2, "t": "Ack", "id": 5, "state": "s1",
 ;   "chats": [{"chatId": "C1", "room": "mimi://a.example/r/x",
 ;              "bound": true, "accepted": false}]}
 ; Keys: t, v, id, chats, state; inside: room, bound, chatId, accepted.
@@ -6,7 +6,7 @@ a5                                  ; map, 5 pairs
 61 74                               ; "t"
 63 41 63 6b                         ; "Ack"
 61 76                               ; "v"
-01                                  ; 1
+02                                  ; 2
 62 69 64                            ; "id"
 05                                  ; 5
 65 63 68 61 74 73                   ; "chats"
