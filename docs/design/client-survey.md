@@ -116,20 +116,33 @@ have a TLS listener (`listen_tls`). There are two ways a phone can use it.
 - **Bouncer.** The agent runs on the user's own always-on host and the
   app connects over the network, the way Goguma connects to soju. This
   works on both platforms, and it is the only way to serve iOS. It
-  needs three things the agent does not have:
-  1. A listener that is not loopback, with TLS. That reverses a rule
-     the agent states in agent.md and AGENTS.md (open question 1).
-  2. Authentication fit for a network: today's 43-character token
+  needed three things. The listener is built for both front ends; the
+  other two are built for IRC and wait on each further front end.
+  1. A listener that is not loopback. Built: `listen_tls` on both
+     `[irc]` and `[jmap]`, on any address the operator names, off by
+     default and needing `[tls]` (decision S1); and the plain `[irc]
+     listen` takes any address too (decision mimid-1wgh.92, which
+     amends S1 for IRC). Off loopback a plain listener's traffic is
+     cleartext, and keeping it off the wrong network is the operator's
+     to do, with a firewall or a proxy. The agent's plain HTTP listener
+     stays loopback only. A credential is required on every listener.
+  2. Authentication fit for a network: the agent's 43-character token
      over TLS is enough strength, but each protocol wants it in its own
-     form (SASL PLAIN for Goguma, SCRAM or SASL2 for Monal, a password
-     login for Matrix).
+     form. Built for Goguma and the other IRC clients: SASL PLAIN, SASL
+     SCRAM-SHA-256 and `PASS`, each carrying the token or an app
+     password (decisions S3 and frontend-auth.md A3). Still missing:
+     SCRAM or SASL2 for Monal and a password login for Matrix, which
+     come with those front ends (epics mimid-wmdj, mimid-rvqk).
   3. Push to wake the app, through whatever relay the app's vendor
-     runs (§1.2).
+     runs (§1.2). Built for Goguma: `soju.im/webpush`, encrypted so the
+     relay sees no text (step 4 in §2). Still missing: Palaver's relay
+     (step 8) and the relays of the front ends not yet built.
 
-A middle path keeps the loopback rule: the user runs WireGuard or
-Tailscale on host and phone, and the agent binds to the tunnel address
-only. That is still not loopback, so it is the same decision, with a
-smaller exposure.
+A tunnel is the shape the agent recommends: the user runs WireGuard or
+Tailscale on host and phone, and binds `listen_tls` to the tunnel
+address only. agent.md calls a tailnet or WireGuard address the safe
+choice for either front end's TLS listener, since the exposure is
+smaller than a public address.
 
 ### 1.2 Push goes through the app vendor's relay
 
@@ -228,7 +241,9 @@ the cheapest phone story in this note. Reach is small (Goguma's 10K+
 installs); the users are the people likely to run a personal always-on
 host.
 
-**Risks.** Bouncer mode needs the non-loopback listener (question 1).
+**Risks.** Bouncer mode's listener is built (§1.1), and off loopback a
+plain `[irc] listen` is cleartext, so a bouncer across a network the
+operator does not control wants `listen_tls` or a tunnel.
 pushgarden.emersion.fr is one person's service; it was not tested with
 a sender other than soju.
 
