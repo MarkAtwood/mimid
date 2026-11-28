@@ -1,1 +1,2 @@
 {"id":"01a21f9c-15db-75ca-9377-a132cf844eef","issue_id":"mimid-5lo5","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-28T00:44:12.635380786Z"}
+{"id":"01a21f9e-7193-70fb-b247-24e87316547e","issue_id":"mimid-5lo5","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Item 8 restored as the citation target its three references expect; source and rendered numbering match again. Commit a1a26cdb.","created_at":"2026-11-28T00:46:47.18706535Z"}

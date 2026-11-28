@@ -2,11 +2,13 @@
   "id": "mimid-5lo5",
   "title": "agent-frontends.md §7 numbering: no item 8, and the rendered numbers drift",
   "description": "Found during the prose pass over the docs.\n\ndocs/design/agent-frontends.md §7 has no item 8: the list runs 1 to 7 and then jumps to 9. Item 7's title, \"A ChatContact or Chat that is gone\", looks like items 7 and 8 merged by commit 394d7123. `§7.8` is still cited three times, from §3 steps 3, 4 and 5.\n\nThe consequence is worse than a gap. CommonMark takes only the first number of an ordered list and renders the rest in sequence, so from item 9 on every rendered number is one lower than the `§7.N` it is cited as: what renders as \"8.\" is cited as §7.9, and what renders as \"29.\" is cited as §7.30. A reader who counts the rendered list and a reader who greps the source land on different items.\n\nThe source numbers are the ones the citations match: 146 `agent-frontends.md §N` references in source comments and docs, 32 in the beads, and 33 beads point into the file. So renumbering is not the fix. Two candidates:\n\n- restore an explicit item 8, either the content that was merged into 7 or a placeholder saying where it went, so source and rendered numbering line up again;\n- turn §7's items into headings, which do not renumber, at the cost of changing every heading line in that section.\n\nEither is a content decision, not a prose fix, so the pass left it.\n",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-28T00:44:10.197346968Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-28T00:44:10.197346968Z"
+  "updated_at": "2026-11-28T00:46:47.178463936Z",
+  "closed_at": "2026-11-28T00:46:47.178463936Z",
+  "close_reason": "Item 8 restored as the citation target its three references expect; source and rendered numbering match again. Commit a1a26cdb."
 }
