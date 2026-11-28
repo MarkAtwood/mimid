@@ -1,0 +1,25 @@
+{
+  "id": "mimid-08h8",
+  "title": "Would a libsqlite3-sys collision stop MDK and mimid linking at all?",
+  "description": "nostr-comparison.md §4(b) says two OpenMLS copies in one binary \"may build but double the MLS code\". That was checked and is right: cargo builds two git revisions of one crate name side by side when they are reached through different manifests, and rustc has its own note for the state (\"there are multiple different versions of crate X in the dependency graph\").\n\nWhat was not checked: two copies of a crate carrying a native `links` key do make cargo refuse outright, with \"multiple packages link to native library ...\". MDK uses SQLCipher and mimid uses sqlx/sqlite, so a libsqlite3-sys collision is plausible. If it holds, puppet mode does not cost double the MLS code -- it does not link at all, and relay mode is the only option rather than the preferred one, which would change §4(b)'s verdict and §6's recommendation.\n\nNeither the marmot nor the mdk repository is checked out here, so it cannot be settled from this tree. It needs MDK's Cargo.lock, or a human to fetch it. Until then §4(b) stands as written, which is correct as far as it goes.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:05:12.632003797Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:05:29.008105927Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-08h8",
+      "depends_on_id": "mimid-z02y",
+      "type": "discovered-from",
+      "created_at": "2026-11-28T01:05:14.721829195Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
