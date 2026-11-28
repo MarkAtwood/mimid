@@ -64,16 +64,20 @@ Each crate documents its own limitations in the `# Limitations` section of its r
 | Crate | Contents |
 |---|---|
 | `mimi-mls` | All OpenMLS usage, MLS wire newtypes, label helpers |
+| `mls-didwebvh` | The did:webvh MLS credential: its codec, did:webvh log verification, the heads record and the group rules, without an MLS library |
 | `mimi-content` | mimi-content CBOR message format and MessageId |
 | `mimi-room-policy` | room-policy codecs and policy evaluation |
 | `mimi-protocol` | protocol wire types and franking, and the room component update logic the hub and agents share |
+| `mimid-live` | The live stream's messages and strict CBOR codec: mimid's own second binding of the client-provider operations, between agent and provider |
+| `mimid-telemetry` | What either binary says about itself: the log's JSON format, the OpenTelemetry export, and the refusals whose lines are rate limited |
 | `mimid-server` | The `mimid` provider server: hub and follower roles, and a JMAP Chat endpoint (partial) |
-| `mimid-agent-core` | The client engine: one user's MLS keys and rooms, through their mimid server's JMAP API |
+| `mimid-agent-core` | The client engine: one user's MLS keys and rooms, reaching their mimid server over JMAP or, with `binding = "stream"`, over the live stream |
 | `mimid-agent-store` | The agent's plaintext layer that its front ends share: the message, room and contact records and their file, attachment blobs and retries, message identifiers, notices |
 | `mimid-agent-jmap` | JMAP Chat over `mimid-agent-core`: the user's rooms as Chats and Messages |
-| `mimid-agent` | The `mimid-agent` daemon: builds the plaintext store and serves `mimid-agent-jmap` over it as a local JMAP Chat endpoint on loopback (`[jmap]` in its configuration) |
+| `mimid-agent-irc` | The IRC front end over `mimid-agent-store`: an IRC server, with no IRC library, giving each room a channel and each person a nick |
+| `mimid-agent` | The `mimid-agent` daemon: builds the plaintext store and runs the front ends over it, JMAP Chat (`[jmap]`) and IRC (`[irc]`), on loopback by default and, with `listen_tls`, over TLS on any address |
 
-The four `mimi-*` crates are synchronous and do no I/O. The admin CLI is `mimid admin` ([docs/operating.md](docs/operating.md#the-admin-commands)). mimid ships no UI of its own.
+The `mimi-*` crates, `mls-didwebvh` and `mimid-live` are synchronous and do no I/O. The admin CLI is `mimid admin` ([docs/operating.md](docs/operating.md#the-admin-commands)). mimid ships no UI of its own.
 
 mimid builds against a fork of OpenMLS ([MarkAtwood/openmls](https://github.com/MarkAtwood/openmls)) carrying fixes that are not yet in an OpenMLS release.
 
