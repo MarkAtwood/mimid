@@ -1994,6 +1994,16 @@ Added on 2026-11-20:
       Welcome and records it under that same lock, so a window between
       the two would let the other side's room for the same pair arrive
       there unseen and this host a second one, which the hub refuses.
+      The look is for a one-to-one room with the user that the agent is
+      active in and the records do not have, not for a hidden one (bead
+      mimid-5km1): `Store::accept_invite` joins a room and leaves the
+      record to the next sync, so between the two the agent is in the
+      room with nothing in the records saying so, and a look at the
+      `hiddenRoom` tombstones alone misses it. A room the user deleted
+      (§7.9) is left out, since adopting it would undo the delete;
+      hosting a second one is refused, so that case fails until the next
+      sync brings the record back, and which of the two it should do is
+      bead mimid-6vsk.
     - **PART and destroy on a fixed room.** §5 lets a user "remove all
       its clients from the associated MLS group" but not leave the
       participant list, so §7.1's "PART leaves the room for real" cannot
@@ -2025,9 +2035,10 @@ Added on 2026-11-20:
       from the policy); version 12 (the `hiddenRoom` tombstone).
     - Tests: mimid-server `tests/hub_policy.rs` `fixed_membership_rooms`;
       mimid-agent-store `tests/groundwork.rs`
-      `one_to_one_rooms_are_made_once_and_recognised` and
-      `open_direct_does_not_host_a_second_room_over_a_sync`; mimid-agent
-      `tests/groundwork.rs` `direct_chats_over_jmap` and
+      `one_to_one_rooms_are_made_once_and_recognised`,
+      `open_direct_does_not_host_a_second_room_over_a_sync` and
+      `open_direct_finds_an_accepted_room_the_records_do_not_have`;
+      mimid-agent `tests/groundwork.rs` `direct_chats_over_jmap` and
       `destroying_a_direct_chat_hides_it_until_the_next_message`;
       mimid-agent-store `tests/groundwork.rs`
       `a_hidden_direct_room_comes_back_with_its_next_message`; and

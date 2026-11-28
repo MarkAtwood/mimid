@@ -737,6 +737,69 @@ async fn open_direct_does_not_host_a_second_room_over_a_sync() {
     );
 }
 
+/// Oracle: room-policy-04 §5 ("Only a single fixed-membership room can
+/// exist for any unique set of participants"); bead mimid-5km1.
+/// `Store::accept_invite` joins the room and leaves the record to the
+/// next `Store::sync`, so between the two nothing in the records says
+/// the agent is in it. `Store::open_direct` with the other user must
+/// find that room rather than host a second one for the pair, which the
+/// hub refuses and which leaves the user's first message failing.
+///
+/// No interleaving and no clock: the invite is accepted and the room
+/// opened in order, with no sync in between.
+#[tokio::test]
+async fn open_direct_finds_an_accepted_room_the_records_do_not_have() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    // Never: a Welcome is staged and not joined, so the join is this
+    // test's to place, as it is for a user whose policy asks them.
+    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Never);
+    bob.open_database().unwrap();
+    bob.agent()
+        .lock()
+        .await
+        .publish_key_packages(4)
+        .await
+        .unwrap();
+    let changes = server.changes.clone();
+
+    let direct = alice.host_room(&HostOptions::direct()).await.unwrap();
+    alice.invite(&direct, BOB).await.unwrap();
+    until_store(&bob, &changes, |s| !s.state().invites.is_empty()).await;
+    let number = bob.state().invites[0].number;
+    assert_eq!(bob.accept_invite(number).await.unwrap(), direct);
+    assert!(bob.state().room_of_uri(&direct).is_none(), "no record yet");
+    assert_eq!(bob.direct_room(ALICE), None);
+
+    let (room, new) = bob
+        .open_direct(bob.new_key(), ALICE)
+        .await
+        .expect("the room the invite was accepted into");
+
+    assert!(!new, "the room was found, not hosted again");
+    assert_eq!(room.uri, direct);
+    assert!(room.direct);
+    assert_eq!(bob.direct_room(ALICE), Some(room.key.clone()));
+    let directs: Vec<String> = bob
+        .state()
+        .rooms
+        .values()
+        .filter(|r| r.direct)
+        .map(|r| r.uri.clone())
+        .collect();
+    assert_eq!(
+        directs,
+        std::slice::from_ref(&direct),
+        "one room for the pair"
+    );
+    assert_eq!(
+        alice.participants(&direct).unwrap().len(),
+        2,
+        "nothing was added to alice's room"
+    );
+}
+
 /// The bodies of `page`.
 fn bodies(page: &mimid_agent_store::Page) -> Vec<&str> {
     page.messages.iter().map(|m| m.body.as_str()).collect()
