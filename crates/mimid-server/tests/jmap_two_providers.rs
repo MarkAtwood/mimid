@@ -36,6 +36,9 @@
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
 mod common;
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
+#[path = "common/fanout.rs"]
+mod fanout;
+#[allow(dead_code, reason = "each test binary uses part of the helpers")]
 #[path = "common/group_info.rs"]
 mod group_info;
 #[allow(dead_code, reason = "each test binary uses part of the helpers")]
@@ -53,7 +56,8 @@ use std::collections::{BTreeMap, VecDeque};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use common::{
-    ALICE, BOB, HUB_IDENTITY, ROOM_APP_COMPONENTS, base_room_policy, franking_agent, no_components,
+    ALICE, BOB, HUB_IDENTITY, ROOM_APP_COMPONENTS, ROOM_ID, base_room_policy, franking_agent,
+    no_components,
 };
 use group_info::{GROUP_INFO_HEADER, Requester};
 use key_packages::{Ask, NO_REQUIREMENTS};
@@ -263,8 +267,11 @@ struct Jmap {
     /// FanoutMessages read but not yet taken.
     queue: VecDeque<FanoutMessage>,
     /// The provider's announcement of each event it stores, which is
-    /// what [`Jmap::next`] waits on.
-    appended: tokio::sync::broadcast::Sender<(String, u64)>,
+    /// what [`Jmap::next`] waits on. The provider's handle, not its
+    /// follower's sender: the follower is replaced by the restart of
+    /// step 4b, and a reader holding the old sender would wait on a
+    /// channel nothing sends to (bead mimid-kb9a).
+    appended: providers::Appended,
 }
 
 impl Jmap {
@@ -286,7 +293,7 @@ impl Jmap {
             account,
             state: None,
             queue: VecDeque::new(),
-            appended: provider.follower().appended_sender(),
+            appended: provider.appended(),
         }
     }
 
@@ -387,11 +394,12 @@ impl Jmap {
     /// fanout to bring one.
     ///
     /// Woken by the provider's follower, which announces each event it
-    /// stores. The receiver is taken before the read, so an event
-    /// stored while the read is in flight waits in the channel rather
-    /// than being missed. No deadline: a message that never arrives
-    /// hangs the test, where a guessed one could not tell that from a
-    /// loaded machine.
+    /// stores. The receiver is taken before the read, and from the
+    /// provider rather than from one of its followers, so neither an
+    /// event stored while the read is in flight nor a restart between
+    /// two reads can silence the wait. No deadline: a message that
+    /// never arrives hangs the test, where a guessed one could not tell
+    /// that from a loaded machine.
     async fn next(&mut self) -> FanoutMessage {
         loop {
             if let Some(message) = self.queue.pop_front() {
@@ -1052,4 +1060,41 @@ async fn two_providers_over_jmap_only() {
     );
     alice_jmap.assert_empty().await;
     bob_jmap.assert_empty().await;
+}
+
+/// Bead mimid-kb9a: a reader's announcement handle outlives the restart
+/// of step 4b, so the restarted provider's follower still wakes it.
+///
+/// [`Jmap::next`] reads, and waits on the handle when the read finds
+/// nothing. A handle that went deaf at the restart leaves that wait
+/// registered on a channel nothing sends to, with everything else idle:
+/// the test then hangs for as long as it is given, and whether it hangs
+/// at all depends on whether the read happened to overtake the fanout.
+///
+/// The ordering here is explicit rather than raced. The receiver is
+/// taken first, and the delivery has stored and announced the event by
+/// the time it returns, so the announcement is already in the receiver:
+/// `try_recv` needs no clock and cannot be early.
+#[tokio::test]
+async fn an_announcement_handle_outlives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = Provider::bind("a.example", dir.path()).await;
+    let mut b = Provider::bind("b.example", dir.path()).await;
+    b.boot(&peers(&a)).await;
+    // Taken before the restart, as a reader of the running provider
+    // takes it.
+    let appended = b.appended();
+    b.stop().await;
+    b.boot(&peers(&a)).await;
+
+    let mut announced = appended.subscribe();
+    let (_, body) = fanout::notify_body(ROOM_ID, 1, &fanout::commit_message());
+    b.follower()
+        .accept_fanout(ROOM_ID, &a.domain, &body)
+        .await
+        .unwrap();
+    let (room_id, _seq) = announced
+        .try_recv()
+        .expect("the restarted provider announced the event it stored");
+    assert_eq!(room_id, ROOM_ID);
 }

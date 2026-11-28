@@ -1,8 +1,9 @@
 //! Helpers for the three-provider end-to-end test: full provider stacks on
 //! loopback, wired as `main.rs` wires them, behind a front that can script
 //! `/notify` faults and keeps the port across a restart; raw reads of each
-//! provider's follower log and captured outbox; and an agent's inbox,
-//! reading a user's events through the follower API.
+//! provider's follower log and captured outbox; the announcement handle a
+//! reader waits on, which outlives a restart as the port does; and an
+//! agent's inbox, reading a user's events through the follower API.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -17,9 +18,9 @@ use mimi_mls::tls_codec::Deserialize;
 use mimi_protocol::FanoutMessage;
 use mimid_server::config::{BaseUrl, Domain};
 use mimid_server::directory::directory;
-use mimid_server::follower::Follower;
 use mimid_server::follower::key_packages::KeyPackages;
 use mimid_server::follower::relay::{LocalUser, Relay};
+use mimid_server::follower::{Follower, SUBSCRIBE_CAPACITY};
 use mimid_server::http::router;
 use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
@@ -28,6 +29,7 @@ use mimid_server::peer::PeerClient;
 use mimid_server::store::Store;
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqliteConnectOptions;
+use tokio::sync::broadcast;
 use tower::ServiceExt;
 
 /// A scripted answer to one `/notify` request reaching the front.
@@ -94,6 +96,35 @@ pub struct Stack {
     pub key_packages: Arc<KeyPackages>,
 }
 
+/// A handle on a provider's announcement of each event its follower
+/// stores, which resolves to a channel when a receiver is taken and not
+/// when the handle is made.
+///
+/// Every [`Provider::boot`] builds a new [`Follower`], and with it a new
+/// announcement channel. A caller that keeps the follower's own sender
+/// across a restart keeps a channel nothing sends to any more, and a
+/// reader that waits on it is parked for good: the provider stores the
+/// event, nobody is listening where the reader listens, and the runtime
+/// goes idle with the reader's future still registered (bead
+/// mimid-kb9a). This resolves the provider's current channel instead.
+///
+/// A receiver taken before a restart still hears nothing after it, so
+/// take one per wait, as [`Inbox::next`] does.
+#[derive(Clone)]
+pub struct Appended(Arc<Mutex<broadcast::Sender<(String, u64)>>>);
+
+impl Appended {
+    /// Receives every announcement the provider's follower makes from
+    /// now on, as (room ID, seq).
+    ///
+    /// Taken while the provider is stopped, the receiver hears the
+    /// announcements of no stack: the one that stopped is gone and the
+    /// next one is not built yet.
+    pub fn subscribe(&self) -> broadcast::Receiver<(String, u64)> {
+        self.0.lock().unwrap().subscribe()
+    }
+}
+
 /// One provider: its domain, database file, front and, while running, its
 /// stack.
 pub struct Provider {
@@ -102,6 +133,9 @@ pub struct Provider {
     pub path: PathBuf,
     front: Front,
     stack: Option<Stack>,
+    /// The announcement channel of the running stack's follower, which
+    /// [`Provider::boot`] replaces and [`Appended`] reads through.
+    appended: Arc<Mutex<broadcast::Sender<(String, u64)>>>,
 }
 
 impl Provider {
@@ -113,13 +147,23 @@ impl Provider {
         let front = Front::default();
         let app = Router::new().fallback(forward).with_state(front.clone());
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Replaced by the first boot; a receiver taken before then hears
+        // nothing, since no follower exists to announce anything.
+        let (appended, _) = broadcast::channel(SUBSCRIBE_CAPACITY);
         Self {
             domain: Domain::try_from(domain.to_owned()).unwrap(),
             base: BaseUrl::try_from(base).unwrap(),
             path: dir.join(format!("{domain}.sqlite")),
             front,
             stack: None,
+            appended: Arc::new(Mutex::new(appended)),
         }
+    }
+
+    /// A handle on this provider's announcement of each event its
+    /// follower stores, which survives a restart.
+    pub fn appended(&self) -> Appended {
+        Appended(Arc::clone(&self.appended))
     }
 
     /// Starts the stack on the provider's database, as `main.rs` does, with
@@ -144,6 +188,9 @@ impl Provider {
                 .with_peers(peer_client())
                 .with_key_packages(Arc::clone(&key_packages)),
         );
+        // This stack's channel is the one an `Appended` handle hands out
+        // from now on, including a handle taken before this boot.
+        *self.appended.lock().unwrap() = follower.appended_sender();
         let fanout = Fanout::new(
             store.clone(),
             domain.clone(),

@@ -588,6 +588,12 @@ impl Follower {
     /// The sending side of [`Follower::subscribe`], so a caller can
     /// take a receiver at the moment it needs one rather than keeping
     /// one alive and falling behind.
+    ///
+    /// The channel is this follower's. A caller that keeps the sender
+    /// past the follower holds a channel nothing announces on any more,
+    /// and keeping the sender keeps it open, so a receiver taken from it
+    /// waits instead of closing: ask whatever owns the follower for the
+    /// sender each time, rather than keeping one across a restart.
     #[must_use]
     pub fn appended_sender(&self) -> broadcast::Sender<(String, u64)> {
         self.appended.clone()
