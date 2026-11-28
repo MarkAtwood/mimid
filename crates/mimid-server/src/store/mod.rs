@@ -9,6 +9,10 @@
 //!   `-wal` and `-shm` files the main file's mode.
 //! - One write transaction runs at a time (decision mimid-1wgh.42; see
 //!   [`Store`]).
+//! - Reads run on four connections and a further concurrent read waits for
+//!   one of them, rather than for a connection to be opened. Each is held
+//!   for one query or one read transaction, so the wait is a query's
+//!   length.
 
 mod accepted;
 mod blobs;
@@ -73,6 +77,17 @@ const FORBIDDEN_MODE_BITS: u32 = 0o077;
 /// connection instead.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How many read-only connections the store keeps. [`Store::open`] opens
+/// all of them and the pool retires none, so no query pays for an open:
+/// sqlx gives every new connection its pragmas as a statement
+/// (`PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;`), and a loaded
+/// machine has taken 2.4 seconds to answer that statement (bead
+/// mimid-604m.3). The cost is four read connections and their page caches
+/// for the life of the process, and a fifth concurrent read waiting for one
+/// of the four; a reader holds its connection for one query or one read
+/// transaction, never across network I/O.
+const READ_CONNECTIONS: u32 = 4;
+
 /// A handle to the provider's database, with migrations applied.
 ///
 /// All writes go through `pool`, which holds exactly one connection, so
@@ -90,7 +105,9 @@ pub struct Store {
     // limit: shorten transactions or batch writes per transaction; SQLite
     // never runs two writers at once anyway.
     pool: SqlitePool,
-    /// Read-only connections for queries outside a write transaction.
+    /// Read-only connections for queries outside a write transaction:
+    /// [`READ_CONNECTIONS`] of them, all open before [`Store::open`]
+    /// returns and none retired afterwards.
     reader: SqlitePool,
     /// The ids of the tokens revoked since the store was opened, for the
     /// connections they opened to close (bead mimid-v9co). Every clone
@@ -149,7 +166,16 @@ impl Store {
                 configured: domain.to_string(),
             });
         }
-        let reader = SqlitePool::connect_with(options.read_only(true)).await?;
+        // Opened here, all of them, and kept: neither an idle timeout nor a
+        // maximum lifetime retires one, so no query runs the pragma
+        // statement a new connection needs (bead mimid-604m.3).
+        let reader = SqlitePoolOptions::new()
+            .max_connections(READ_CONNECTIONS)
+            .min_connections(READ_CONNECTIONS)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect_with(options.read_only(true))
+            .await?;
         Ok(Self {
             pool,
             reader,
@@ -317,6 +343,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored, "a.example");
+        store.close().await;
+    }
+
+    /// Bead mimid-604m.3: sqlx gives every connection it opens its pragmas
+    /// as one statement, which a gate run measured at 2.4 seconds under I/O
+    /// load, so a pool that opens a connection to answer a query charges
+    /// that to the caller. Both pools open every connection they will use
+    /// in [`Store::open`] and retire none, so the count sqlx keeps
+    /// (`SqlitePool::size`) does not move while queries run. What this
+    /// asserts is that count, not an elapsed time: the machine decides the
+    /// latter.
+    #[tokio::test]
+    async fn queries_open_no_connection() {
+        const QUERIES: usize = 20;
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("mimid.sqlite"), &domain("a.example"))
+            .await
+            .unwrap();
+        assert_eq!(store.reader.size(), READ_CONNECTIONS);
+        assert_eq!(store.pool.size(), 1);
+
+        let mut tasks = Vec::new();
+        for _ in 0..QUERIES {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .projection_cursor("mimi://a.example/u/alice")
+                    .await
+                    .unwrap();
+                sqlx::query("UPDATE provider SET domain = domain")
+                    .execute(&store.pool)
+                    .await
+                    .unwrap();
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        assert_eq!(
+            store.reader.size(),
+            READ_CONNECTIONS,
+            "a read opened a connection"
+        );
+        assert_eq!(store.pool.size(), 1, "a write opened a connection");
         store.close().await;
     }
 
