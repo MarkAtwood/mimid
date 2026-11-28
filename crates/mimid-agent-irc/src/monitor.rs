@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 
 use crate::conn::Session;
-use crate::line::{Line, MAX_LINE, Out, pack};
+use crate::line::{Line, MAX_LINE, Out, echoed, pack};
 use crate::names::{SERVICE_NICK, fold, is_nick};
 
 /// The most targets one connection's monitor list holds, which 005's
@@ -469,7 +469,7 @@ impl Session {
             vec![
                 "MONITOR".to_owned(),
                 code.to_owned(),
-                context.to_owned(),
+                echoed(context).to_owned(),
                 description.to_owned(),
             ],
         ));

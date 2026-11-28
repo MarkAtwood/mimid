@@ -2511,3 +2511,56 @@ async fn monitor_and_setname_are_not_answered_before_registration() {
     assert_eq!(codes, ["451", "451", "451"], "{answers:#?}");
     alice.stop().await;
 }
+
+/// A name the client sent and a reply echoes back must still leave one
+/// line the client can read: a name the parameter grammar cannot carry,
+/// or one long enough to push the reply past the 512 octets this front
+/// end advertises as `LINELEN`, goes out as `*`.
+///
+/// Oracles: the Modern IRC Client Protocol §"Parameters" -- a parameter
+/// that holds a space, is empty or begins with `:` must be the last one,
+/// and `nospcrlfcl` admits neither NUL, CR nor LF -- and §"Message
+/// Format"'s 512 octets, which `Irc::next` asserts of every line it
+/// reads. The three sites are the ones that echo a name a client chose:
+/// ADMIN's 402, WHOWAS's 406 and the 369 after it, and MONITOR's `FAIL`
+/// context.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_echoed_name_cannot_break_the_reply_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let (mut irc, _) = Irc::register(alice.irc.unwrap(), &alice.token(), ALICE_NICK, &[]).await;
+
+    // Long enough that the reply would pass 512 octets, short enough
+    // that the inbound guard admits the line at all (510 octets).
+    let long = "a".repeat(480);
+    // `long` fits the grammar and not the line; the rest fit neither.
+    // `:a b` arrives as the one name `a b`: a leading colon is not
+    // reachable from the wire, because `line::parse` takes it as the
+    // marker of the last parameter rather than as part of the value.
+    for name in [long.as_str(), "a\rb", "a\0b", ":a b"] {
+        for (line, codes) in [
+            (format!("ADMIN {name}"), &["402"][..]),
+            (format!("WHOWAS {name}"), &["406", "369"][..]),
+        ] {
+            irc.send(&line).await;
+            let answer = irc.sync().await;
+            let got: Vec<&str> = answer.iter().map(|m| m.command.as_str()).collect();
+            assert_eq!(got, codes, "{name:?}: {answer:#?}");
+            for msg in &answer {
+                assert_eq!(msg.params[1], "*", "{name:?}: {msg:#?}");
+            }
+        }
+        irc.send(&format!("MONITOR + {name}")).await;
+        let answer = irc.sync().await;
+        let got: Vec<&str> = answer.iter().map(|m| m.command.as_str()).collect();
+        assert_eq!(got, ["FAIL"], "{name:?}: {answer:#?}");
+        assert_eq!(answer[0].params[2], "*", "{name:?}: {answer:#?}");
+    }
+    // A name that fits both is still echoed as it was sent, so the
+    // guard above is not simply answering `*` to everything.
+    irc.send("WHOWAS nobody-x").await;
+    let answer = irc.sync().await;
+    assert_eq!(answer[0].params[1], "nobody-x", "{answer:#?}");
+    alice.stop().await;
+}

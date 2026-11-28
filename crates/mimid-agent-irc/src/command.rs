@@ -76,7 +76,7 @@ use mimid_agent_store::convert::MessageRef;
 use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
-use crate::line::{Line, Out};
+use crate::line::{Line, Out, echoed};
 use crate::names::{
     Held, SERVICE_NICK, Was, fold, is_channel_name, parse_user_address, parse_user_uri,
 };
@@ -133,7 +133,7 @@ fn whowas_lines(server: &str, client: &str, asked: &str, was: Option<&Was>) -> V
                 "406",
                 vec![
                     client.to_owned(),
-                    asked.to_owned(),
+                    echoed(asked).to_owned(),
                     "There was no such nickname".to_owned(),
                 ],
             ),
@@ -142,7 +142,7 @@ fn whowas_lines(server: &str, client: &str, asked: &str, was: Option<&Was>) -> V
                 "369",
                 vec![
                     client.to_owned(),
-                    asked.to_owned(),
+                    echoed(asked).to_owned(),
                     "End of WHOWAS".to_owned(),
                 ],
             ),
@@ -481,7 +481,7 @@ impl Session {
             "RESTART" => {
                 self.numeric("481", &["mimid-agent does not restart itself"]);
             }
-            other => self.numeric("421", &[other, "Unknown command"]),
+            other => self.numeric("421", &[echoed(other), "Unknown command"]),
         }
     }
 
@@ -1281,9 +1281,9 @@ impl Session {
                 self.numeric("318", &[&who.nick, "End of /WHOIS list"]);
                 return;
             }
-            _ => self.numeric("401", &[&nick, "No such nick/channel"]),
+            _ => self.numeric("401", &[echoed(&nick), "No such nick/channel"]),
         }
-        self.numeric("318", &[&nick, "End of /WHOIS list"]);
+        self.numeric("318", &[echoed(&nick), "End of /WHOIS list"]);
     }
 
     /// `WHOWAS <nick> [<count>]`: which MIMI user the nick stands for
@@ -1529,7 +1529,7 @@ impl Session {
             && fold(target) != fold(&me.nick)
             && fold(target) != SERVICE_NICK
         {
-            self.numeric("402", &[target, "No such server"]);
+            self.numeric("402", &[echoed(target), "No such server"]);
             return;
         }
         // 256's `<server>` is optional and goes out as a middle

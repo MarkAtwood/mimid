@@ -150,9 +150,19 @@
 //!   (`register::CAPS`).
 //! - A user URI longer than [`names::MAX_ACCOUNT`], or holding a
 //!   character IRC cannot write, is shown as the `*` account and
-//!   carries no `account` tag (decision mimid-1wgh.150). The same URI
-//!   still reaches the wire raw in 311, 330, 352 and every hostmask,
-//!   which is bead mimid-1wgh.140.11.
+//!   carries no `account` tag (decision mimid-1wgh.150). The same URI is
+//!   still written at its own length in 311, 312, 314, 330, 352 and
+//!   every hostmask, so one past [`names::MAX_ACCOUNT`] can carry the
+//!   reply past [`line::MAX_LINE`]: bead mimid-1wgh.140.11. What no
+//!   length can do is break the line, because no parameter reaches the
+//!   wire holding CR, LF or NUL ([`line::Out::to_wire`]).
+//! - A name a client sent is echoed back by 401, 402, 406, 421, the 369
+//!   after a 406, and `FAIL MONITOR` only while it fits
+//!   [`line::MAX_ECHO`] and the parameter grammar; otherwise the reply
+//!   names `*`. A client that asks about a name longer than any this
+//!   daemon could have issued therefore cannot tell two such replies
+//!   apart, which is the cost of keeping the reply inside the 512
+//!   octets 005 advertises as `LINELEN`.
 //! - A user not seen yet has no nick: a first private message to them
 //!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they

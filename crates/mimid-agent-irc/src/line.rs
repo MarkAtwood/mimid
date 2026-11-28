@@ -22,6 +22,32 @@ pub const MAX_CLIENT_TAGS: usize = 8191;
 /// The most parameters read from one line (RFC 1459 §2.3.1).
 pub const MAX_PARAMS: usize = 15;
 
+/// The octets no parameter may hold, whichever one it is: `middle` is
+/// `nospcrlfcl *( ":" / nospcrlfcl )` and `trailing` is `*( ":" / " " /
+/// nospcrlfcl )`, and `nospcrlfcl` is "any character except NUL, CR, LF,
+/// colon and SPACE" (Modern §"Parameters"). [`Out::to_wire`] writes a
+/// space for each of these in a last parameter and `*` for a middle one
+/// that holds any.
+const FORBIDDEN: [char; 3] = ['\r', '\n', '\0'];
+
+/// The longest name a client sent that this crate writes back into a
+/// parameter that is not the last one.
+///
+/// A reply that says a name is not here echoes the name so that a client
+/// can tell which request it answers. No name longer than the longest
+/// this daemon could have issued -- a nick, a channel, or a user URI --
+/// names anything here, so a longer one is answered with `*`: it tells
+/// the client nothing a cut name would, and the reply has to fit
+/// [`MAX_LINE`], which [`Out::cut_to_room`] cannot arrange for a
+/// parameter that is not the last one without changing which parameter
+/// it is.
+pub const MAX_ECHO: usize = crate::names::MAX_ACCOUNT;
+
+const _: () = assert!(
+    MAX_ECHO >= crate::names::NICKLEN && MAX_ECHO >= crate::names::CHANNELLEN,
+    "every name this daemon can issue must be short enough to echo back"
+);
+
 /// A line a client sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
@@ -231,10 +257,26 @@ impl Out {
         let last = self.params.len().saturating_sub(1);
         for (i, param) in self.params.iter().enumerate() {
             out.push(' ');
-            if i == last && (param.is_empty() || param.contains(' ') || param.starts_with(':')) {
-                out.push(':');
+            if i == last {
+                if param.contains(FORBIDDEN) {
+                    // Replacing them leaves a space, so the parameter
+                    // needs its `:` whether or not it held one before.
+                    out.push(':');
+                    out.push_str(&param.replace(FORBIDDEN, " "));
+                } else {
+                    if param.is_empty() || param.contains(' ') || param.starts_with(':') {
+                        out.push(':');
+                    }
+                    out.push_str(param);
+                }
+            } else if is_middle_param(param) {
+                out.push_str(param);
+            } else {
+                // Nothing the wire can carry here: the value would end
+                // the line, split it, shift the parameters after it, or
+                // be read back as the last one.
+                out.push('*');
             }
-            out.push_str(param);
         }
         out.push_str("\r\n");
         out
@@ -290,6 +332,22 @@ impl Out {
 #[must_use]
 pub fn is_middle_param(text: &str) -> bool {
     !text.is_empty() && !text.starts_with(':') && !text.contains([' ', '\r', '\n', '\0'])
+}
+
+/// `text`, to be written back as a parameter that is not the last one,
+/// or `*` where it cannot be: longer than [`MAX_ECHO`], or refused by
+/// the grammar ([`is_middle_param`]).
+///
+/// [`Out::to_wire`] already answers the grammar with `*`, so this is the
+/// length bound and the one place a caller states that the value came
+/// from the client.
+#[must_use]
+pub fn echoed(text: &str) -> &str {
+    if text.len() <= MAX_ECHO && is_middle_param(text) {
+        text
+    } else {
+        "*"
+    }
 }
 
 /// `text` cut into pieces of at most `max` octets each, on UTF-8
@@ -603,5 +661,85 @@ mod tests {
             parse("382 val a:b Rehashing").unwrap().params,
             ["val", "a:b", "Rehashing"]
         );
+    }
+
+    /// Oracle: the Modern IRC Client Protocol §"Parameters", written out
+    /// by hand. `middle` is `nospcrlfcl *( ":" / nospcrlfcl )` and
+    /// `trailing` is `*( ":" / " " / nospcrlfcl )`, so NUL, CR and LF
+    /// belong to no parameter at all, and a value that holds a space, is
+    /// empty or begins with `:` may only be the last one.
+    ///
+    /// A caller that hands such a value to a parameter that is not the
+    /// last one has nothing the wire can carry, so `*` goes out instead
+    /// of a line that would split, shift the parameters after it, or
+    /// carry an octet RFC 1459 §2.3 forbids.
+    #[test]
+    fn no_parameter_goes_out_holding_what_the_grammar_refuses() {
+        for refused in [
+            "",
+            ":leading",
+            "two words",
+            "a\rb",
+            "a\nb",
+            "a\0b",
+            " ",
+            ":",
+        ] {
+            let out = Out::new(
+                "s",
+                "402",
+                vec![
+                    "val".to_owned(),
+                    refused.to_owned(),
+                    "No such server".to_owned(),
+                ],
+            );
+            assert_eq!(
+                out.to_wire(false),
+                ":s 402 val * :No such server\r\n",
+                "{refused:?}"
+            );
+        }
+        // The last parameter may hold a space and a colon, and does; CR,
+        // LF and NUL are not its to hold either, and become spaces, as
+        // the text around them is still the text.
+        let trailing = |text: &str| {
+            Out::new("s", "NOTICE", vec!["val".to_owned(), text.to_owned()]).to_wire(false)
+        };
+        assert_eq!(trailing("two words"), ":s NOTICE val :two words\r\n");
+        assert_eq!(trailing(":x"), ":s NOTICE val ::x\r\n");
+        assert_eq!(trailing("a\r\nQUIT"), ":s NOTICE val :a  QUIT\r\n");
+        assert_eq!(trailing("a\0b"), ":s NOTICE val :a b\r\n");
+        // Every line still ends with exactly one CR-LF.
+        for text in ["a\rb", "a\nb", "a\r\nb", "plain"] {
+            let wire = trailing(text);
+            assert_eq!(wire.matches("\r\n").count(), 1, "{text:?} -> {wire:?}");
+        }
+    }
+
+    /// Oracle: [`MAX_ECHO`] against [`MAX_LINE`] -- a name longer than
+    /// the longest this daemon could have issued is answered with `*`,
+    /// because a parameter that is not the last one cannot be cut to fit
+    /// the line without changing which parameter it is.
+    #[test]
+    fn a_name_too_long_to_echo_is_answered_with_a_star() {
+        let longest = "n".repeat(MAX_ECHO);
+        assert_eq!(echoed(&longest), longest);
+        assert_eq!(echoed(&"n".repeat(MAX_ECHO + 1)), "*");
+        assert_eq!(echoed("nobody-x"), "nobody-x");
+        // The grammar is checked as well as the length.
+        assert_eq!(echoed("two words"), "*");
+        assert_eq!(echoed(""), "*");
+        // The reply that echoes the longest name it may still fits.
+        let out = Out::new(
+            "a.very.long.server.name.example",
+            "406",
+            vec![
+                "n".repeat(crate::names::NICKLEN),
+                echoed(&longest).to_owned(),
+                "There was no such nickname".to_owned(),
+            ],
+        );
+        assert!(out.to_wire(true).len() <= MAX_LINE, "{}", out.to_wire(true));
     }
 }

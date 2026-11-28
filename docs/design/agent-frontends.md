@@ -2910,6 +2910,53 @@ Added on 2026-11-20:
       proof nothing was relayed).
 
 
+41. **The parameter grammar is enforced where a line becomes bytes, and
+    an echoed name is bounded.** Modern §"Parameters" writes a middle
+    parameter as `nospcrlfcl *( ":" / nospcrlfcl )` and a trailing one as
+    `*( ":" / " " / nospcrlfcl )`, so NUL, CR and LF belong to no
+    parameter at all, and a value that holds a space, is empty or begins
+    with `:` may only be the last one. `Out::to_wire` wrote the `:` for
+    the last parameter and nothing else, which left every caller holding
+    the grammar on its own.
+
+    - **The rule.** `Out::to_wire` writes a space for each CR, LF or NUL
+      in a last parameter and `*` for any parameter that is not the last
+      one and could not be one. A value that becomes a space then always
+      takes the `:` it may not have needed before, which is why the
+      replacement is made before the delimiter is chosen and not after.
+      This is the one place a line becomes bytes, so no caller can
+      reintroduce the hole, and `line::is_middle_param` stays the
+      predicate both halves read.
+    - **The bound.** A reply that says a name is not here echoes the name
+      so a client can tell which request it answers, and the echo is a
+      middle parameter, which `cut_to_room` cannot shorten without
+      changing which parameter it is. So `line::echoed` answers `*` for a
+      name longer than `line::MAX_ECHO`, which is `names::MAX_ACCOUNT`:
+      the longest name this daemon could have issued, a const assertion
+      tying it above `NICKLEN` and `CHANNELLEN`. The sites are 401, 402,
+      406, the 369 after a 406, 421 and `FAIL MONITOR`. The cost is in
+      the crate's `# Limitations`: two such replies read alike.
+    - **What is not fixed.** A user URI is still written at its own
+      length in 311, 312, 314, 330, 352 and every hostmask, so one past
+      `names::MAX_ACCOUNT` can carry that reply past 512 octets. That is
+      bead mimid-1wgh.140.11, and it is now a question of length alone.
+    - **Reachable from the wire.** A leading colon is not: `line::parse`
+      takes it as the marker of the last parameter, so a client cannot
+      deliver a value that begins with one. A trailing parameter holding
+      a space is reachable (`ADMIN :a b` asks about the one name `a b`),
+      and so are CR and NUL, which the inbound path neither rejects nor
+      strips from the middle of a token.
+    - Tests: mimid-agent-irc
+      `line::tests::no_parameter_goes_out_holding_what_the_grammar_refuses`
+      (every class the grammar names, in both positions, and one CR-LF
+      per line),
+      `line::tests::a_name_too_long_to_echo_is_answered_with_a_star`;
+      mimid-agent `tests/irc.rs`
+      `an_echoed_name_cannot_break_the_reply_line` (ADMIN, WHOWAS and
+      MONITOR each given a 480-octet name, a CR, a NUL and a space, with
+      the harness's own 512-octet assertion on every line read, and a
+      name that fits still echoed as sent).
+
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
