@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.138.3",
+  "title": "Service command to turn a displayed msgid ULID back into a message",
+  "description": "A client shows a message's msgid tag and nothing can turn it back into the message. From the span work of bead mimid-604m, 2026-11-27.\n\nThe IRC msgid tag and the JMAP senderMsgId are not the message ID: both carry a ULID, 26 characters of Crockford base32 built from the hub's acceptance time and octets 1 to 10 of the message ID. The spans a trace is read by carry msgid as the message ID in lowercase hex (docs/agent.md). So joining a line a user saw to the trace of how it arrived means decoding a ULID by hand, which is the one step that makes the instrumentation unusable from where a user actually is.\n\nWHAT TO ADD: a service command taking the ULID a client displayed and answering with the message ID, the room, the sender and the time the hub accepted it. The reverse direction is worth having too, since a trace gives the hex and the question is then which line the user saw.\n\nWHY THE SERVICE AND NOT A VERB: this is a MIMI concept IRC has no word for, which is the epic's rule for what belongs here.\n\nBOUNDED BY WHAT A RECORD KEEPS: mimid-agent-store owns senderMsgId and message references, so the answer comes from the records and the command cannot invent what was not kept. Say in the help text what is not available for a message the store has expired, rather than answering with a guess.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:23:33.661049392Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:23:33.661049392Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.138.3",
+      "depends_on_id": "mimid-1wgh.138",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:23:33.70861157Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.138.3",
+      "depends_on_id": "mimid-604m",
+      "type": "discovered-from",
+      "created_at": "2026-11-28T05:23:33.74725495Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

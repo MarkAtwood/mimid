@@ -1,0 +1,27 @@
+{
+  "id": "mimid-f9x4.1",
+  "title": "The keepalive draft's jitter and its 3x floor can disagree",
+  "description": "Implementing the keepalive on the live stream (bead mimid-mm42) found one\nplace where 4.1 and 4.3 of the draft can both be satisfied only by luck,\nand one sentence of 4.3 that no binding can obey as written.\n\nONE. 4.3 lets the prober choose any P with minIntervalSeconds \u003c= P, and\nrequires each interval to be P randomized between 0.8 and 1.2. At P =\nminIntervalSeconds, two intervals in ten fall below minIntervalSeconds,\nwhich the same section lets the responder answer tooFrequent and which the\nprober must then wait out. A prober that wants every interval at or above\nminIntervalSeconds needs P \u003e= 1.25 x minIntervalSeconds, so it needs\n3.75 x minIntervalSeconds \u003c maxIdleSeconds, not the 3 x of 4.1. A responder\nthat states exactly 3 x minIntervalSeconds + 1 therefore offers a range in\nwhich no jitter-safe P exists, while satisfying 4.1.\n\nThree ways out, none chosen here:\n\n  - raise the floor in 4.1 from 3 to 3.75 (or 4), so that a legal pair\n    always admits a jitter-safe P;\n  - say in 4.3 that the jitter is applied upward only, 1.0 to 1.4 of P,\n    which keeps every interval at or above minIntervalSeconds and keeps\n    desynchronization;\n  - say in 4.3 that an interval shorter than minIntervalSeconds is the\n    prober's own affair and that a responder MUST NOT answer tooFrequent\n    to a probe inside the jitter window, which is hard to state without\n    naming the window.\n\nThe live stream dodges it: the prober picks the largest legal P rather than\nthe smallest, its carrier's probe is a WebSocket Ping, and nothing answers\na Ping tooFrequent. A binding whose probe is the draft's own\nKeepAliveRequest cannot dodge it.\n\nTWO. 4.3 requires a responder that changes either value to \"answer one\nfurther probe paced by the previous values\". A responder that restates its\nvalues in a KeepAliveResponse (4.1 requires it in every response) cannot\ntell whether the probe it is now answering was paced by the old values or\nthe new ones: nothing in the request says which values the prober held, and\nthe nonce names nothing. The requirement is satisfiable only as a timer --\ndo not refuse or reap for one previous-maxIdleSeconds after the change --\nwhich is what the second half of the same paragraph already says. The first\nhalf can go.\n\nNEITHER IS IMPLEMENTED HERE. The live stream states one pair per carrier\nand never changes it, so TWO costs mimid nothing today; ONE is avoided by\nthe choice of P recorded in decision mimid-1wgh.137. Both belong in the\ndraft before it is sent, which is why this bead exists rather than a code\nchange.\n",
+  "notes": "ALSO, from the same implementation: §4.5's revalidation asks nothing of a binding whose prober probes continuously. An end that probes on the pair it was told has either heard from the other inside the idle tolerance or declared the carrier dead, so delivery traffic only ever goes on a carrier that answered inside it. §4.5 earns its place only where a prober stops probing an idle carrier, which the draft never says it may do; saying that it may, and then requiring revalidation, would make the section bite.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T04:59:24.443630528Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:21:25.384557014Z",
+  "labels": [
+    "human",
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-f9x4.1",
+      "depends_on_id": "mimid-f9x4",
+      "type": "parent-child",
+      "created_at": "2026-11-28T04:59:24.4873302Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.138.4",
+  "title": "Service commands for a room's policy and the clients behind its users",
+  "description": "IRC's MODE and NAMES are narrower than what MIMI rooms carry, so two things a user may reasonably ask cannot be asked.\n\nROOM POLICY. room-policy-04 gives a room roles with capabilities, a preauth list, fixed_membership, parent_dependent, max_users, max_clients and multi_device. IRC MODE carries a handful of letters and mimid maps what it can (CHANNEL_MODES, PARAMETER_MODES in the front end). Everything else is invisible, including the two facts that change what a user may do: whether the room's membership is fixed, and what their own role allows. A user who cannot invite should be able to find out why.\n\nCLIENTS BEHIND A USER. NAMES lists nicks, and a nick is a MIMI user. A user has clients, and may have none while remaining a participant, which is exactly the state room-policy-04 §5 leaves a user in when they remove their devices from a DM. So NAMES can show a participant who cannot receive anything, with no way to tell. mimi-protocol-07's participant and client lists have the data.\n\nWHAT TO ADD: two service commands, one for a room's policy as mimid evaluated it, one for the clients behind each participant of a room. Both read-only.\n\nDO NOT WIDEN MODE OR NAMES TO CARRY THIS. Stock clients parse both and mis-render unexpected content, which is the epic's rule; and a MODE letter invented for fixed_membership would collide with the next network a user connects to.\n\nCHECK AGAINST THE EVALUATOR, NOT THE WIRE: mimi-room-policy evaluates policy and documents what it does not check, including §5's rule on leaving and the max_clients, max_users and multi_device limits (decision mimid-1wgh.3.50). A command that prints a limit mimid does not enforce must say so, or it tells the user a constraint protects them when it does not.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:23:33.857157377Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:23:33.857157377Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.138.4",
+      "depends_on_id": "mimid-1wgh.138",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:23:33.924492827Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

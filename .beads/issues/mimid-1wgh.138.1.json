@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.138.1",
+  "title": "STATS, TIME, INFO and HELP: the server-query verbs mimid does not answer",
+  "description": "Mark 2026-11-27 asked what standard IRC verbs return metadata, status and version data, and whether mimid answers them. Four worth having are missing, and the first takes work that was about to be built as a service subcommand.\n\nIMPLEMENTED TODAY: VERSION, MOTD, the 005 ISUPPORT tokens with line packing (register.rs), WHO, WHOIS, ISON, USERHOST, NAMES, LIST, MODE, METADATA, and the IRCv3 set CHATHISTORY, MARKREAD, WEBPUSH, TAGMSG, REDACT and FAIL.\n\nMISSING: STATS, TIME, INFO, HELP, LUSERS, ADMIN, LINKS, TRACE, WHOWAS, MONITOR, SETNAME, USERS, SERVLIST.\n\nWHAT TO ADD, in this order.\n\nSTATS. The standard verb for server statistics, with server-defined letters, reached by /stats in every client. This is where the agent's own state belongs: groups out of sync, outbox depth, time of the last sync, rooms, and the intervals the live stream's carrier agreed once mimid-mm42 lands. It replaces the service subcommand this was first planned as, under the rule the epic states: a real IRC verb where the data fits IRC's shape. Define the letters in the design note, not only in the code, since nothing else will tell a user what to ask for. STATS u, uptime, is the one letter with a conventional meaning and a conventional numeric.\n\nTIME. The agent's clock, which is not a formality here: message expiry (Store::set_message_expiry) and every timestamp a client renders run off it, so a user comparing their client's clock with the agent's has a real question.\n\nINFO. What this is: that it is a mimid agent rather than an IRC network, its version, and that the mimid service nick holds the commands IRC has no verb for. The discovery path for a user who connected a stock client and found a server that is not a server.\n\nHELP. Stock clients bind /help, and nothing else will lead a user to a service surface of twenty commands. It should list the service's commands, which means help text has one source and both paths read it.\n\nWHAT NOT TO ADD, recorded so it is not revisited: LUSERS and ADMIN are trivial and nearly meaningless for a single-user agent, where there is one user and the admin is that user. LINKS and TRACE describe a multi-server network, which this is not, and TRACE is conventionally oper-only. WHOWAS wants nick churn, and these nicks come from MIMI identities. USERS and SERVLIST are obsolete or belong to the services protocol. MONITOR is worth having and is not this: it is presence notification, a feature of its own, and Goguma's interest in it makes it a separate bead.\n\nBEFORE WRITING ANY NUMERIC. The project cites RFC 1459 and RFC 2812 and keeps no local copy of either, and HELP's numerics (704, 705, 706) are in neither: they are later practice. Get an authoritative source into ~/PROJECT/IETF/specs the way the MIMI drafts are kept, or cite the one used, and never write a numeric from memory. STATS letters are deliberately server-defined, so mimid's choices are mimid's and belong in the design note with a line saying they are invented.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:22:59.361663721Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:22:59.361663721Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.138.1",
+      "depends_on_id": "mimid-1wgh.138",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:22:59.561709323Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

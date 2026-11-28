@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.137",
+  "title": "Decision: the live stream negotiates its keepalive pair in the hello",
+  "description": "Bead mimid-mm42 carries the keepalive's two intervals in the live stream's\nhello instead of compiling mimid_live::PING_AFTER into both ends, per\ndecision 6 on bead mimid-f9x4. The draft in that bead's design field is the\nnormative text: its 4.1 defines maxIdleSeconds and minIntervalSeconds, its\n4.3 the negotiation and the pacing, its 4.4 the failure rule. What follows\nis what the live stream invents around them.\n\nTHE RULE. 3 x minIntervalSeconds \u003c maxIdleSeconds (4.1), as the named\nconstant mimid_live::keepalive::PROBES_PER_IDLE, enforced in the decoder\nrather than by the caller: a hello that breaks it is not a message of this\nversion. The stream's own refusal is the new Error code badKeepalive, which\nthe provider sends for a ClientHello the decoder refused that way; every\nother malformed hello is still badMessage. The floor is 3, not the 2.4 the\nbead's description first said: 2.4 covers two probes paced at up to 1.2 of\nthe period and leaves nothing for the second answer.\n\nBOTH VALUES ARE OPTIONAL ON THE WIRE, in ClientHello and in ProviderHello\nalike, and one without the other is refused. The hello keeps its v1 form in\nevery version (note 5.11), which is what lets the two ends agree a version\nat all, so a member added in a later version cannot be required: a v1\nProviderHello must still decode at a v2 agent to be told the version is\nwrong.\n\nA PROBER WITH NO VALUES DOES NOT PROBE (4.3), with one exception the bead\nnames: a provider told nothing by a client probes it on the pair the\nprovider published in its own ProviderHello, so a client that offers\nnothing still works. That is not a default invented for the occasion but\nthe number the client was just told; in the other direction no such number\nexists, so an agent whose provider stated nothing does not probe and does\nnot reap the carrier.\n\nTHE PERIOD P is the largest whole second with 3 x P \u003c maxIdleSeconds, at\nleast minIntervalSeconds. The largest rather than the smallest: at P =\nminIntervalSeconds the 0.8 end of the jitter puts a probe sooner than the\nresponder undertook to answer, which 4.3 lets a responder refuse as\ntooFrequent. The live stream has no tooFrequent -- its probe is a WebSocket\nPing, which nothing refuses -- so the choice costs nothing here and keeps\nthe carrier correct for a responder that does.\n\nTHE JITTER is 0.8 to 1.2 of P (4.3), drawn from a SplitMix64 seeded once\nper carrier from mimi_mls::label::random_array. Not cryptographic and not\nrequired to be: its only job is that many probers do not synchronize. A\nseed, not a value per interval, so a frame arriving does not cost a call to\nthe system's randomness.\n\nDEATH is two unanswered probes and maxIdleSeconds of idle together (4.4),\nnot either alone. 3 x P \u003c maxIdleSeconds makes the pair consistent: by the\ntime the idle tolerance is spent at least two probes have gone unanswered,\nwhich is the derivation the draft's 4.1 states.\n\nTHE OFFERED PAIR is PING_AFTER (30 seconds, unchanged) as\nminIntervalSeconds and the new MAX_IDLE (120 seconds) as maxIdleSeconds.\nCost: a dead carrier is noticed within two minutes rather than within one,\nbecause the idle tolerance must now hold two probes and the second answer.\nThe probe cadence stays under the 60 seconds where deployed NATs reap an\nidle TCP connection: P is 39 seconds, so the jittered interval is at most\n47.\n\nMAX_KEEPALIVE_SECONDS is a day, the cap on either value at parse time, so\nno arithmetic on a hostile hello overflows and no responder can state an\nidle tolerance it will never reach.\n\nTHE VERSION IS 2. The hello changes shape, and JmapOptions::live_ping_after\nbecomes JmapOptions::live_keepalive, a checked pair: what the provider\noffers, not what it enforces. The provider enforces what the client stated.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T04:58:59.312756919Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T04:58:59.312756919Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.137",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T04:58:59.360758336Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

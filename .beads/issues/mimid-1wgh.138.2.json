@@ -1,0 +1,30 @@
+{
+  "id": "mimid-1wgh.138.2",
+  "title": "Service commands for leaving a room and for removing only my clients",
+  "description": "IRC's PART has one meaning and MIMI has two, so a user cannot say which they meant. From Mark's decision on bead mimid-6vsk and the discussion that produced mimid-1wgh.136.\n\nroom-policy-04 §5: \"Ordinary users cannot leave or be removed, however a user can remove all its clients from the associated MLS group. The most common case of a fixed-membership room is a 1:1 conversation.\" So for a DM, leaving as a participant is forbidden and removing one's clients is the only way out. For an ordinary room both are possible and they differ: one changes the participant list, the other leaves the user a participant with nothing listening.\n\nPART cannot grow a second meaning without breaking the first, which is why this is a service command and not a flag on PART.\n\nWHAT TO ADD: two words, named so that neither can be mistaken for the other, for \"remove me as a participant\" and \"remove all my clients here\". The second is the one that works on a DM. Each says what the other party sees, because both are visible as an MLS Commit and a user who thinks a delete is private will be wrong.\n\nBLOCKED ON mimid-1wgh.136, which is Mark's: whether a deleted DM should be durable, and if so whether a delete means removing this user's clients. The vocabulary here is the same question seen from the IRC side, so build it after that decision, not before, or the words will mean something the store does not do.\n\nALSO: mimid does not enforce §5's rule at all. crates/mimi-room-policy/src/lib.rs says the rule that ordinary users cannot leave or be removed is \"not checked here (room-policy-04 §5; decision mimid-1wgh.3.50)\", the hub has no check, and Store::leave does not refuse a direct room. A leave command that offers the illegal operation on a DM would be offering what the spec forbids through a surface that looks official, so this bead either refuses it in the front end or waits for the policy crate, and says which in its close reason.\n\nWhen this lands, rewrite service.rs's Limitations sentence: \"reports and removing participants have no command in v1\".\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:23:00.569959528Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:23:00.569959528Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.138.2",
+      "depends_on_id": "mimid-1wgh.138",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:23:01.663275341Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    },
+    {
+      "issue_id": "mimid-1wgh.138.2",
+      "depends_on_id": "mimid-1wgh.136",
+      "type": "blocks",
+      "created_at": "2026-11-28T05:23:02.239448613Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
