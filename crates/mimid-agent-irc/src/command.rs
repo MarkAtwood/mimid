@@ -47,6 +47,12 @@
 //!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
 //!   the user URI as the account), `ISON`, `USERHOST`,
 //!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`.
+//! - `MONITOR` (730, 731, 732, 733, 734; 461 for a missing or empty
+//!   target list, `FAIL MONITOR INVALID_PARAMS` for an unknown modifier,
+//!   a target that is no nick here or a parameter too many) reports
+//!   reachability and not availability ([`crate::monitor`]), and
+//!   `SETNAME` is refused with `FAIL SETNAME CANNOT_CHANGE_REALNAME`
+//!   (decision mimid-1wgh.146).
 //! - `WHOWAS` (314, 312, then 369; 406 then 369 for a nick this run has
 //!   not given; always ends 369) says which MIMI user a nick stands for
 //!   and since when (decision mimid-1wgh.143).
@@ -339,6 +345,19 @@ impl Session {
             "WHOWAS" => self.whowas(line),
             "ISON" => self.ison(line),
             "USERHOST" => self.userhost(line),
+            // The two IRCv3 verbs (class 1 and class 2 of epic
+            // mimid-1wgh.140, decision mimid-1wgh.146). Neither reads a
+            // credential: both run on a connection that is registered
+            // and so already authenticated, and `crate::register`
+            // answers 451 before that.
+            //
+            // MONITOR reports reachability -- whether a nick's user has
+            // a client in a group this user shares -- because MIMI
+            // defines no presence (`crate::monitor`). It touches the
+            // nicks and the records and never the agent, so it is
+            // answered while a sync holds the agent, as ISON is.
+            "MONITOR" => self.monitor(line),
+            "SETNAME" => self.setname(),
             "AWAY" => {
                 if line.param(0).is_some_and(|m| !m.is_empty()) {
                     self.numeric("306", &["You have been marked as being away"]);
@@ -1431,6 +1450,48 @@ impl Session {
             }
         }
         self.numeric("302", &[&replies.join(" ")]);
+    }
+
+    /// `SETNAME`: refused, always, with `FAIL SETNAME
+    /// CANNOT_CHANGE_REALNAME` (~/PROJECT/IETF/specs/ircv3-setname.md:84-89,
+    /// "If the server rejects the change for any other reason, it MUST
+    /// send a `FAIL` message with the `CANNOT_CHANGE_REALNAME` code and
+    /// an appropriate description of the reason").
+    ///
+    /// There is nothing for the command to change. The realname this
+    /// front end reports is the user URI itself, in 352's last parameter
+    /// and in 311's, and MIMI carries no display name a client may set:
+    /// protocol-07's only profile is the `UserProfile` a provider's
+    /// identity service returns for an `identifierQuery`, room-policy-04
+    /// names "Nickname" in its terminology alone, and mimi-content-10
+    /// carries no name for a sender. So a `SETNAME` asks to change the
+    /// identity the provider authenticates, and the only other reading --
+    /// a name this one connection reports to itself -- tells the user
+    /// something no peer will ever see. Decision mimid-1wgh.146 records
+    /// both readings; the `setname` capability is never advertised, and
+    /// no `NAMELEN` token with it, which is what lets the command be
+    /// refused at all (:28-37).
+    ///
+    /// INVALID_REALNAME (:79-82) is not used: the refusal is not about
+    /// the value sent, and is the same for every value, so the parameter
+    /// is not read and a bare `SETNAME` is not 461 either. This declines
+    /// :32-34's SHOULD ("the server SHOULD handle it silently (with no
+    /// response), as historic implementations did"): a user who types
+    /// `/setname` and is answered with silence cannot tell it from
+    /// success, and the FAIL carries the spec's own code, so a client
+    /// that knows `setname` shows the reason.
+    fn setname(&mut self) {
+        let server = self.shared.server.clone();
+        self.send_cut(Out::new(
+            &server,
+            "FAIL",
+            vec![
+                "SETNAME".to_owned(),
+                "CANNOT_CHANGE_REALNAME".to_owned(),
+                "your realname here is your MIMI user URI, which only your provider sets"
+                    .to_owned(),
+            ],
+        ));
     }
 
     /// ADMIN: who runs this agent and how to reach them, in the four

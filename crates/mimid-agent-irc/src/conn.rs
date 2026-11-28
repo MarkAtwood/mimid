@@ -324,6 +324,12 @@ pub(crate) struct Session {
     pub(crate) channels: BTreeMap<Key, ChannelView>,
     pub(crate) shown: HashMap<Key, ShownMessage>,
     pub(crate) invites_shown: BTreeSet<u64>,
+    /// The nicks this connection monitors, by folded nick, with the nick
+    /// as the client sent it and the verdict last reported for it
+    /// ([`crate::monitor`]). Per connection and never persisted: a
+    /// reconnect starts empty, which is what a client that re-sends
+    /// `MONITOR +` after registration expects.
+    pub(crate) monitor: BTreeMap<String, crate::monitor::Monitored>,
     /// The name this connection sent JOIN for to accept an invite, by the room's
     /// URI, until the room arrives: a one-to-one room is a query, so the
     /// name is answered with JOIN and PART (docs/irc-lessons.md "Answer
@@ -370,6 +376,7 @@ impl Session {
             channels: BTreeMap::new(),
             shown: HashMap::new(),
             invites_shown: BTreeSet::new(),
+            monitor: BTreeMap::new(),
             accepted_names: HashMap::new(),
             own_sends: HashSet::new(),
             connected_at: 0,
@@ -554,6 +561,10 @@ impl Session {
                     self.apply(&change);
                     self.mark = seq;
                 }
+                // One hook for every change that could have moved a
+                // monitored nick's reachability, so no Change variant
+                // has to be enumerated (§7.39).
+                self.monitor_refresh();
             }
             Err(_too_old) => {
                 self.mark = store.last_seq();
@@ -562,6 +573,7 @@ impl Session {
                      and messages in between are not shown",
                 );
                 self.show_all();
+                self.monitor_refresh();
             }
         }
     }

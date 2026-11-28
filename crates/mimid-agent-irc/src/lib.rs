@@ -103,6 +103,16 @@
 //! - **Reactions** (§7.27): shown as TAGMSG with `+draft/react` under
 //!   message-tags, else as a short ACTION line; a TAGMSG with
 //!   `+draft/react` or `+draft/unreact` reacts or takes it back.
+//! - **Reachability** (§7.39, the `monitor` module): `MONITOR` answers 730 for a
+//!   nick whose user has a client in the MLS group of a room this user
+//!   shares with them, and 731 for one who has none. That is
+//!   reachability and not availability: MIMI defines no presence, and a
+//!   user with no clients in the group receives nothing. The list is per
+//!   connection and bounded by [`MAX_MONITOR`], which 005
+//!   advertises. `SETNAME` is refused with `FAIL SETNAME
+//!   CANNOT_CHANGE_REALNAME`: the realname this front end reports is the
+//!   user URI, and MIMI carries no display name a client may set
+//!   (decision mimid-1wgh.146).
 //!
 //! # Limitations
 //!
@@ -119,7 +129,13 @@
 //! - A user not seen yet has no nick: a first private message to them
 //!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
-//!   stay a participant, so the nick stays in the channel.
+//!   stay a participant, so the nick stays in the channel. `MONITOR`
+//!   then reports that nick offline while `NAMES` still lists it, which
+//!   is the two verbs answering two different questions and not a
+//!   disagreement. Neither is fresher than the last sync.
+//! - A client shows a 730 as "online" and a user reads it as "here".
+//!   mimid cannot say whether anyone is at the other end, only whether
+//!   anything of theirs is in the group.
 //! - There is no IRC operator and no server link, so `OPER` is answered
 //!   491 ERR_NOOPERHOST and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` 481
 //!   ERR_NOPRIVILEGES: a refusal that names what mimid is, not the 421
@@ -197,6 +213,7 @@ mod history;
 pub mod line;
 mod listen;
 mod markread;
+mod monitor;
 pub mod names;
 mod register;
 mod render;
@@ -208,6 +225,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use listen::IrcFrontEnd;
+pub use monitor::MAX_MONITOR;
 pub use sasl::MECHANISMS as SASL_MECHANISMS;
 pub use webpush::{PAD_TO as PUSH_PAD_TO, TTL_SECONDS as PUSH_TTL_SECONDS, WebPushError};
 

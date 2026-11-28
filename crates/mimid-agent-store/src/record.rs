@@ -692,6 +692,24 @@ pub struct Person {
     /// When their DID last changed, in milliseconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub did_changed_at: Option<u64>,
+    /// How many of this user's clients are leaves of the MLS group of a
+    /// room this user shares with them, as of the last sync
+    /// (`crate::sync`'s `refresh_clients`): reachability, not
+    /// availability. `Some(0)` says nothing of theirs is in any shared
+    /// group, so nothing sent reaches them -- the state room-policy-04
+    /// §5 leaves a user in who removed their devices, and the state a
+    /// kick leaves a participant in. It does not say they are away, and a
+    /// non-zero count does not say anyone is reading. A user who shares
+    /// no room is `Some(0)`. `None` means no sync has counted yet, and is
+    /// read as nothing known rather than as zero.
+    ///
+    /// A projection of MLS state, as [`Person::did`] is, and no fresher
+    /// than the last sync: between a Commit elsewhere and that sync the
+    /// count is the one before it. Every leaf added or removed moves the
+    /// room's epoch, which is what the sync refreshes on, and the first
+    /// sync of each process counts every record again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clients: Option<u32>,
     /// When first seen, in milliseconds.
     pub first_seen: u64,
     /// Front-end extensions.

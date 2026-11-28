@@ -60,6 +60,7 @@
 use std::collections::BTreeMap;
 
 use mimi_content::{ExternalPart, MessageId};
+use mimid_agent_core::uri::normalized_uri;
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, ReportedMessage, RoomStatus};
 use mimid_telemetry::refusals::Refusal;
 
@@ -283,7 +284,9 @@ impl Store {
             }
             self.mirror_bans(&agent, &committers, &mut changes);
             // A Commit or a join may bring or change a person's did_webvh
-            // leaves.
+            // leaves, and may add or remove the leaves whose count is
+            // their reachability. Both are projections of leaf state, so
+            // both are refreshed on the same moved epoch.
             let epochs: BTreeMap<String, u64> = agent
                 .rooms()
                 .into_iter()
@@ -301,6 +304,7 @@ impl Store {
             };
             if moved {
                 self.refresh_dids(&agent, None, &mut changes);
+                self.refresh_clients(&agent, &mut changes);
             }
             // Shown, then saved and acknowledged in one transaction.
             self.record(std::mem::take(&mut changes));
@@ -668,6 +672,7 @@ impl Store {
             display_name: None,
             did: None,
             did_changed_at: None,
+            clients: None,
             first_seen: now_ms(),
             ext: BTreeMap::new(),
         });
@@ -975,6 +980,74 @@ impl Store {
                 person.did_changed_at = Some(now_ms());
             }
             person.did = wanted;
+            changes.push(Change::PersonChanged(key));
+        }
+    }
+
+    /// Sets each person's [`crate::record::Person::clients`] to how many
+    /// of that user's clients are leaves of the MLS group of a room this
+    /// user shares with them: the reachability MONITOR reports
+    /// (docs/design/agent-frontends.md §7.39, decision mimid-1wgh.146).
+    ///
+    /// Two differences from `refresh_dids`, which walks the same rooms
+    /// and the same leaves. A user absent from every room is set to `0`
+    /// rather than left as the record has it, because a contact who
+    /// shares no group is unreachable and that is the whole fact; and
+    /// this pass has no second call site on an [`Event`], because no
+    /// event reports a leaf change for this device's own Commit on its
+    /// first attempt (mimid-agent-core's `agent`, `if again`). The epoch
+    /// gate in [`Store::sync`] is what makes this reliable instead: every
+    /// leaf added or removed moves the room's epoch, and the gate's
+    /// record of epochs starts empty, so the first sync of each process
+    /// counts every record again and an `Option` that was never written
+    /// is repaired.
+    ///
+    /// A change is published whenever the stored count moves, not only
+    /// when it crosses zero: the feed names a record that changed
+    /// ([`Change`]), and a front end that shows reachability reads the
+    /// record as it is now.
+    ///
+    /// Leaves and person records come from two sources -- the MLS
+    /// credential identity and the participant-list URI -- so both sides
+    /// are compared in RFC 3986 normal form
+    /// ([`mimid_agent_core::uri::normalized_uri`]). `refresh_dids`
+    /// compares them raw, which bead mimid-1wgh.147 holds.
+    pub(crate) fn refresh_clients(&self, agent: &Agent, changes: &mut Vec<Change>) {
+        // Normalized user URI -> leaves counted across every shared room.
+        let mut counted: BTreeMap<String, u32> = BTreeMap::new();
+        for room in agent.rooms() {
+            if room.status == RoomStatus::Left || self.state().is_forgotten(&room.uri) {
+                continue;
+            }
+            let Ok(clients) = agent.clients(&room.uri) else {
+                continue;
+            };
+            for client in clients {
+                if client.user.is_empty() || client.user == self.user {
+                    continue;
+                }
+                let user = normalized_uri(&client.user).into_owned();
+                if user == self.user {
+                    continue;
+                }
+                let count = counted.entry(user).or_default();
+                *count = count.saturating_add(1);
+            }
+        }
+        let mut state = self.state();
+        let keys: Vec<Key> = state.people.keys().cloned().collect();
+        for key in keys {
+            let Some(person) = state.people.get_mut(&key) else {
+                continue;
+            };
+            let wanted = counted
+                .get(normalized_uri(&person.user).as_ref())
+                .copied()
+                .unwrap_or(0);
+            if person.clients == Some(wanted) {
+                continue;
+            }
+            person.clients = Some(wanted);
             changes.push(Change::PersonChanged(key));
         }
     }

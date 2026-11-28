@@ -378,7 +378,8 @@ async fn registration_queries_and_refusals() {
         "CHANMODES=b,,,nt",
         "NICKLEN=30",
         "CHANNELLEN=64",
-        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1",
+        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1,MONITOR:",
+        "MONITOR=100",
         "LINELEN=512",
         "UTF8ONLY",
         "NETWORK=mimid",
@@ -2115,5 +2116,397 @@ async fn links_answers_with_this_server_alone() {
         }
     }
 
+    alice.stop().await;
+}
+
+/// The targets `MONITOR +` is given in these tests, `n0` to `n<count-1>`:
+/// short enough that a command naming a hundred of them fits one line.
+fn monitor_targets(prefix: &str, count: usize) -> Vec<String> {
+    (0..count).map(|n| format!("{prefix}{n}")).collect()
+}
+
+/// `MONITOR`'s own replies, against the IRCv3 Monitor spec
+/// (~/PROJECT/IETF/specs/ircv3-monitor.md) and the numbers in
+/// ircdocs-modern-numerics.yml: 730 at :926-927, 731 at :929-930, 732 at
+/// :932-933, 733 at :935-936, 734 at :938-939, 461 at :593-594.
+///
+/// Oracle: the parameters each numeric's shape gives (:107, :121, :133,
+/// :140, :146), written out here by hand, and the modifiers' own rules
+/// (:70-101): `-` and `C` answer nothing, `L` always ends with 733, `S`
+/// never does. Every absence is bounded by a following `PING`, whose
+/// `PONG` ends what [`Irc::sync`] collects, so "nothing else" means
+/// nothing before a round trip the daemon demonstrably served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn monitor_answers_the_list_and_its_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let (mut irc, burst) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice", &[]).await;
+
+    // Support is announced by the 005 token and by nothing else
+    // (ircv3-monitor.md:60-65), and TARGMAX says the command takes a list.
+    let tokens: Vec<String> = numerics(&burst, "005")
+        .iter()
+        .flat_map(|m| m.params[1..m.params.len() - 1].iter().cloned())
+        .collect();
+    assert!(tokens.contains(&"MONITOR=100".to_owned()), "{tokens:?}");
+    assert!(
+        tokens
+            .contains(&"TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1,MONITOR:".to_owned()),
+        "{tokens:?}"
+    );
+
+    // A bare MONITOR, and a target parameter that holds no target.
+    irc.send("MONITOR").await;
+    irc.send("MONITOR + ,,").await;
+    irc.send("MONITOR +").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["461", "461", "461"], "{answers:#?}");
+    assert_eq!(
+        answers[0].params,
+        [ALICE_NICK, "MONITOR", "Not enough parameters"]
+    );
+
+    // The user's own nick and the service are reachable; a nick this run
+    // has not given is not. 730 carries the hostmask, 731 the bare nick.
+    irc.send(&format!("MONITOR + {ALICE_NICK},mimid,nobody-x"))
+        .await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["730", "731"], "{answers:#?}");
+    assert_eq!(
+        answers[0].params,
+        [ALICE_NICK, &format!("{ALICE_MASK},mimid!mimid@{SERVER}")]
+    );
+    assert_eq!(answers[1].params, [ALICE_NICK, "nobody-x"]);
+
+    // Already monitored: not added again, and not reported again
+    // (ircv3-monitor.md:72-73), under either spelling.
+    irc.send(&format!("MONITOR + {},MIMID", ALICE_NICK.to_uppercase()))
+        .await;
+    assert!(irc.sync().await.is_empty());
+
+    // L lists what was asked for, as it was asked for, and always ends
+    // with 733.
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["732", "733"], "{answers:#?}");
+    assert_eq!(
+        answers[0].params,
+        [ALICE_NICK, &format!("{ALICE_NICK},mimid,nobody-x")]
+    );
+    assert_eq!(answers[1].params, [ALICE_NICK, "End of MONITOR list"]);
+
+    // S reports every entry and sends no terminator.
+    irc.send("MONITOR S").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["730", "731"], "{answers:#?}");
+
+    // `-` answers nothing at all, and takes the entry out.
+    irc.send("MONITOR - nobody-x").await;
+    assert!(irc.sync().await.is_empty());
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    assert_eq!(
+        answers[0].params,
+        [ALICE_NICK, &format!("{ALICE_NICK},mimid")]
+    );
+
+    // `C` answers nothing, and then L is 733 alone: there is no target
+    // for a 732 to carry.
+    irc.send("MONITOR C").await;
+    assert!(irc.sync().await.is_empty());
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["733"], "{answers:#?}");
+    // S of an empty list says nothing.
+    irc.send("MONITOR S").await;
+    assert!(irc.sync().await.is_empty());
+
+    // What the spec leaves open, refused rather than guessed at: a
+    // modifier it does not define, two modifiers in one command
+    // (:48-54), a parameter too many, and a target that is no nick here
+    // (:67-68), the `nick!user@host` subscription :38-42 rules out among
+    // them.
+    for (sent, context, description) in [
+        ("MONITOR X", "X", "Unknown modifier"),
+        ("MONITOR +-", "+-", "Unknown modifier"),
+        ("MONITOR + a-nick b-nick", "b-nick", "Too many parameters"),
+        ("MONITOR L extra", "extra", "Too many parameters"),
+        (
+            "MONITOR + bob-a!bob@a.example",
+            "bob-a!bob@a.example",
+            "Target is not a nick here",
+        ),
+        ("MONITOR + 9bob", "9bob", "Target is not a nick here"),
+    ] {
+        irc.send(sent).await;
+        let answers = irc.sync().await;
+        assert_eq!(answers.len(), 1, "{sent}: {answers:#?}");
+        assert_eq!(answers[0].command, "FAIL", "{sent}");
+        assert_eq!(
+            answers[0].params,
+            ["MONITOR", "INVALID_PARAMS", context, description],
+            "{sent}"
+        );
+    }
+    // None of them entered the list.
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["733"], "{answers:#?}");
+
+    alice.stop().await;
+}
+
+/// Oracle: ircv3-monitor.md:144-151 -- 734 `ERR_MONLISTFULL` is for a
+/// list that is "full, so the command failed", carrying `<limit>` and
+/// then `<targets>`, "the list of targets, as the client sent them, that
+/// cannot be added", and the description with its full stop. The command
+/// is all-or-nothing, so a `+` over the bound adds nothing at all
+/// (decision mimid-1wgh.146).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn monitor_refuses_a_list_past_its_bound() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let (mut irc, _) = Irc::register(alice.irc.unwrap(), &alice.token(), "alice", &[]).await;
+    let limit = mimid_agent_irc::MAX_MONITOR;
+
+    // One more than the bound, in one command: one 734 naming every
+    // target, in the order sent, and an empty list afterwards.
+    let over = monitor_targets("n", limit + 1);
+    irc.send(&format!("MONITOR + {}", over.join(","))).await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["734"], "{answers:#?}");
+    assert_eq!(
+        answers[0].params,
+        [
+            ALICE_NICK,
+            &limit.to_string(),
+            &over.join(","),
+            "Monitor list is full."
+        ]
+    );
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["733"], "nothing was added: {answers:#?}");
+
+    // A rejected list too long for one line is packed over several 734s,
+    // each repeating `<limit>` and the description, and together they
+    // name every target once in order (INVENTED, NOT FROM SPEC; decision
+    // mimid-1wgh.146).
+    let long = monitor_targets("nn", limit + 1);
+    irc.send(&format!("MONITOR + {}", long.join(","))).await;
+    let answers = irc.sync().await;
+    assert!(answers.len() > 1, "{answers:#?}");
+    let mut named = Vec::new();
+    for m in &answers {
+        assert_eq!(m.command, "734");
+        assert_eq!(m.params[0], ALICE_NICK);
+        assert_eq!(m.params[1], limit.to_string());
+        assert_eq!(m.params[3], "Monitor list is full.");
+        named.extend(m.params[2].split(',').map(str::to_owned));
+    }
+    assert_eq!(named, long);
+
+    // Exactly the bound fits, is listed whole, and one more is refused.
+    let fits = monitor_targets("n", limit);
+    irc.send(&format!("MONITOR + {}", fits.join(","))).await;
+    let answers = irc.sync().await;
+    for m in &answers {
+        assert_eq!(m.command, "731", "all unknown nicks: {m:?}");
+    }
+    irc.send("MONITOR L").await;
+    let answers = irc.sync().await;
+    let mut listed: Vec<String> = Vec::new();
+    for m in &answers {
+        if m.command == "732" {
+            listed.extend(m.text().split(',').map(str::to_owned));
+        }
+    }
+    assert_eq!(listed.len(), limit, "{answers:#?}");
+    assert_eq!(answers.last().unwrap().command, "733");
+    irc.send("MONITOR + one-more").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["734"], "{answers:#?}");
+    assert_eq!(
+        answers[0].params,
+        [
+            ALICE_NICK,
+            &limit.to_string(),
+            "one-more",
+            "Monitor list is full."
+        ]
+    );
+
+    alice.stop().await;
+}
+
+/// The point of the verb here: a 730 says the user has a client in a
+/// group this user shares, not that they are present, and not that they
+/// are a participant (bead mimid-1wgh.140.5; decision mimid-1wgh.146).
+///
+/// Oracle: `KICK` takes bob's devices out of the group and leaves him a
+/// participant (`Store::kick`), so after it `NAMES #lobby` still lists
+/// bob's nick while MONITOR reports him offline. The 731 is also proof
+/// that the count reached the front end on the committer's own side,
+/// where no event reports the membership change. The second connection
+/// of the same user monitors nothing and is told nothing, which is what a
+/// per-connection list means.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn monitor_reports_reachability_not_participation() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Served::start(&irc_only(&server, BOB, dir.path(), "any")).await;
+    let addr = alice.irc.unwrap();
+    let (mut a, _) = Irc::register(addr, &alice.token(), "alice", &ALL_CAPS).await;
+    let (mut quiet, _) = Irc::register(addr, &alice.token(), "alice", &[]).await;
+    let (mut b, _) = Irc::register(bob.irc, &bob.token, "bob", &[]).await;
+
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+    a.send(&format!("INVITE {BOB} #lobby")).await;
+    a.until_command("341").await;
+    joined(&mut b, BOB_MASK, "#lobby").await;
+    a.until("bob's JOIN", |m| {
+        m.command == "JOIN" && m.source == BOB_MASK
+    })
+    .await;
+
+    // bob's one device is in the group, so he is reachable.
+    a.send(&format!("MONITOR + {BOB_NICK}")).await;
+    let online = a.until_command("730").await;
+    assert_eq!(online.params, [ALICE_NICK, BOB_MASK]);
+
+    // The kick removes his devices and leaves him a participant.
+    a.send(&format!("KICK #lobby {BOB_NICK}")).await;
+    let offline = a.until_command("731").await;
+    assert_eq!(offline.params, [ALICE_NICK, BOB_NICK]);
+    a.send("NAMES #lobby").await;
+    let names = a.until_command("353").await;
+    assert!(
+        names.text().split(' ').any(|n| n == BOB_NICK),
+        "still a participant: {}",
+        names.raw
+    );
+
+    // The other connection of the same user asked for nothing and was
+    // told nothing: its list is empty (733 with no 732 before it), and
+    // nothing it was ever sent was a 730 or a 731, the autojoin burst it
+    // also collects here aside.
+    quiet.send("MONITOR L").await;
+    let answers = quiet.sync().await;
+    assert_eq!(
+        answers.last().map(|m| m.command.as_str()),
+        Some("733"),
+        "{answers:#?}"
+    );
+    assert!(
+        !quiet
+            .seen
+            .iter()
+            .any(|m| ["730", "731", "732"].contains(&m.command.as_str())),
+        "{:#?}",
+        quiet.seen
+    );
+
+    bob.stop().await;
+    alice.stop().await;
+}
+
+/// Oracle: ~/PROJECT/IETF/specs/ircv3-setname.md:28-37 (a server
+/// advertising the capability MUST support the command, and MUST then
+/// send `NAMELEN`) and :84-89 (`CANNOT_CHANGE_REALNAME` for a change
+/// rejected for any other reason). mimid refuses the command, so neither
+/// the capability nor the token is sent, and no server-to-client
+/// `SETNAME` is ever written (decision mimid-1wgh.146).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn setname_is_refused_and_never_advertised() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+
+    let mut irc = Irc::connect(addr).await;
+    irc.send("CAP LS 302").await;
+    let ls = irc.line().await;
+    for absent in ["setname", "extended-monitor"] {
+        assert!(
+            !ls.text().split(' ').any(|c| c == absent),
+            "{absent} in {}",
+            ls.raw
+        );
+    }
+    drop(irc);
+
+    let (mut irc, burst) = Irc::register(addr, &alice.token(), "alice", &ALL_CAPS).await;
+    let tokens: Vec<String> = numerics(&burst, "005")
+        .iter()
+        .flat_map(|m| m.params[1..m.params.len() - 1].iter().cloned())
+        .collect();
+    assert!(
+        !tokens.iter().any(|t| t.starts_with("NAMELEN")),
+        "{tokens:?}"
+    );
+
+    // One FAIL and nothing else: no 421, no echoed SETNAME, no numeric.
+    irc.send("SETNAME :Bruce Wayne").await;
+    irc.send("SETNAME Batman").await;
+    irc.send("SETNAME").await;
+    let answers = irc.sync().await;
+    assert_eq!(answers.len(), 3, "{answers:#?}");
+    for m in &answers {
+        assert_eq!(m.command, "FAIL");
+        assert_eq!(m.params[0], "SETNAME");
+        assert_eq!(m.params[1], "CANNOT_CHANGE_REALNAME");
+        assert_eq!(m.params.len(), 3, "code, then the description");
+    }
+
+    // The realname WHOIS reports is the user URI, unchanged.
+    irc.send(&format!("WHOIS {ALICE_NICK}")).await;
+    let whois = irc.until_command("311").await;
+    assert_eq!(whois.text(), ALICE);
+
+    // And another connection of the same user is told nothing.
+    let (mut other, _) = Irc::register(addr, &alice.token(), "alice", &ALL_CAPS).await;
+    other.send("PING :still-nothing").await;
+    other.until_command("PONG").await;
+    assert!(
+        !other.seen.iter().any(|m| m.command == "SETNAME"),
+        "{:#?}",
+        other.seen
+    );
+
+    alice.stop().await;
+}
+
+/// Neither verb is answered before registration, so neither is a second
+/// place a credential could be checked: `crate::register`'s 451 is what
+/// an unregistered connection gets, and the authorization boundary stays
+/// the one check that ends registration (docs/design/frontend-auth.md
+/// §4.1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn monitor_and_setname_are_not_answered_before_registration() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let mut irc = Irc::connect(alice.irc.unwrap()).await;
+    irc.send("CAP LS 302").await;
+    irc.until_command("CAP").await;
+    irc.send("MONITOR + nobody-x").await;
+    irc.send("MONITOR L").await;
+    irc.send("SETNAME :Bruce Wayne").await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(codes, ["451", "451", "451"], "{answers:#?}");
     alice.stop().await;
 }

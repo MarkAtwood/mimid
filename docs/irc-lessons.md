@@ -103,10 +103,19 @@ read for what it sends and expects. Details are in agent-frontends.md
 - **Also from Goguma's source:** `draft/message-redaction` (its "Delete"),
   `CLIENTTAGDENY` (so it sends no `+typing`), `+reply` beside
   `+draft/reply`, `multi-prefix`.
+- **MONITOR is answered** (agent-frontends.md §7.39), as reachability and
+  not presence: a 730 says the nick's user has a client in the MLS group
+  of a room this user shares, which is a fact MIMI gives, and a 731 says
+  they have none. Goguma already sends `MONITOR -` when it closes a
+  query, so it sends `MONITOR +` too and will show an indicator and call
+  it online. The honest answer to "no presence in MIMI" turned out to be
+  a different question, not no answer.
 - **Still skipped:** `labeled-response` (the lesson below stands; Goguma
-  does not need it), `MONITOR` and `away-notify` (no presence in MIMI;
-  Goguma shows no indicator rather than a wrong one),
-  `soju.im/bouncer-networks`, `draft/metadata-2`, `soju.im/FILEHOST`.
+  does not need it), `away-notify` (no presence in MIMI, and nothing to
+  notify of), `soju.im/bouncer-networks`, `draft/metadata-2`,
+  `soju.im/FILEHOST`. `setname` and `extended-monitor` are not skipped
+  but refused: see "Advertise only caps that are wired up" below, and
+  §7.39 for the verb.
 - **Registration as Goguma does it:** everything pipelined, one `CAP REQ`
   per cap (a NAK of an unknown one is harmless), `AUTHENTICATE` before the
   LS reply, a nick change after 001 accepted, but 432, 433, 436, 437 and
@@ -127,6 +136,11 @@ read for what it sends and expects. Details are in agent-frontends.md
   - Advertise only caps that are wired up (meshIRCd advertised
     account-notify, chghost, invite-notify, setname and labeled-response
     without sending them). Clients change their behaviour on the cap list.
+    `setname` is the one that cannot be wired up at all: a server
+    advertising it MUST support the command, and mimid refuses the
+    command, so the cap stays off the list for good (agent-frontends.md
+    §7.39). `extended-monitor` stays off for the same kind of reason: it
+    adds notifications for four caps this front end does not have.
 - **NICK and the burst:**
   - Accept the client's NICK, then make the real nick the target of 001,
     with a NICK change if needed. Never answer NICK with 462 (tailircd);
@@ -243,10 +257,23 @@ read for what it sends and expects. Details are in agent-frontends.md
   (decision mimid-1wgh.141, and the class table in
   docs/design/agent-frontends.md §4). A verb it can answer truthfully is
   answered: ADMIN, LUSERS and LINKS reply with the agent's own facts
-  (decision mimid-1wgh.142). A verb that names an operation the daemon
+  (decision mimid-1wgh.142), and MONITOR reports whether a nick's user
+  has a client in a shared group (decision mimid-1wgh.146, §7.39).
+  SETNAME goes the other way, into the refusals, because the realname
+  here is the user URI and MIMI carries no name a client may set; its
+  refusal is the IRCv3 spec's own FAIL and not a numeric. A verb that
+  names an operation the daemon
   has is carried out: REHASH reads the configuration file again
   (§7.38). RESTART stays 481, which Modern's own section invites by
   calling the command optional.
+- **MONITOR, if you answer it:** pack 730, 731, 732 and 734 over as many
+  lines as 512 octets need (meshIRCd packs nothing and overruns on a long
+  list); echo the nick as the client sent it in 732, not the folded key;
+  keep the full stop in 734's "Monitor list is full."; and refuse an
+  unknown modifier, a target that is no nick and a parameter too many
+  rather than returning in silence, which a client cannot tell from a
+  dropped line. Check the bound before inserting, so the list can never
+  pass what 005 advertises.
 
 ### Messages
 

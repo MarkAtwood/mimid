@@ -181,8 +181,16 @@ fn host_part(domain: &str) -> String {
         .collect()
 }
 
-/// Whether `nick` is one this module could have made.
-fn is_nick(nick: &str) -> bool {
+/// Whether `nick` is one this module could have made: non-empty, at most
+/// [`NICKLEN`] octets of `[A-Za-z0-9_-]`, and not starting with a digit
+/// or `-`.
+///
+/// Public because a MONITOR target "MUST be a valid nick as determined by
+/// the IRC daemon" (~/PROJECT/IETF/specs/ircv3-monitor.md:67-68) and this
+/// is that determination. A nick rule changed here is therefore visible
+/// to the crate's `monitor` module as well.
+#[must_use]
+pub fn is_nick(nick: &str) -> bool {
     !nick.is_empty()
         && nick.len() <= NICKLEN
         && nick.chars().all(nick_char)

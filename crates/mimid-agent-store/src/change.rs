@@ -18,7 +18,9 @@ use crate::record::Key;
 pub enum Change {
     /// A person was first seen, or made by a front end.
     PersonAdded(Key),
-    /// A person's did:webvh DID or local display name changed.
+    /// A person's did:webvh DID or local display name changed, or how
+    /// many of their clients are in a group this user shares
+    /// ([`crate::record::Person::clients`]).
     PersonChanged(Key),
     /// A person record was removed ([`crate::Store::forget_person`]).
     PersonForgotten(Key),

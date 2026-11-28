@@ -35,6 +35,12 @@
 //!
 //! - The change log is in memory and bounded ([`feed`]); a front end that
 //!   falls behind it shows its state again from the records.
+//! - [`record::Person::clients`], the count a front end reads as
+//!   reachability, is a projection of MLS state refreshed by the sync
+//!   and is no fresher than the last one: between a Commit elsewhere
+//!   and that sync it is the count from before it. A room forgotten
+//!   here moves no epoch, so its members keep their count until a sync
+//!   that does move one.
 //! - See each module for its own limits.
 
 #![forbid(unsafe_code)]

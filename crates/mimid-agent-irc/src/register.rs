@@ -17,6 +17,7 @@
 
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, MAX_LINE, Out, pack_words};
+use crate::monitor::MAX_MONITOR;
 use crate::names::{CHANNELLEN, NICKLEN};
 use mimid_agent_store::credentials::Login;
 
@@ -24,6 +25,16 @@ use mimid_agent_store::credentials::Login;
 /// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
 /// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
 /// acknowledged and changes nothing.
+///
+/// `MONITOR` is not here and never will be: the IRCv3 Monitor spec
+/// announces itself through the 005 token alone ([`isupport`]). Two
+/// capabilities must never be added (bead mimid-1wgh.140.6 owns this
+/// list): `setname`, because "Servers advertising the `setname`
+/// capability MUST support usage of the command"
+/// (~/PROJECT/IETF/specs/ircv3-setname.md:28-30) and mimid refuses it;
+/// and `extended-monitor`, which adds only AWAY, ACCOUNT, CHGHOST and
+/// SETNAME notifications for monitored nicks, none of which this front
+/// end has.
 pub const CAPS: [&str; 12] = [
     "batch",
     "draft/chathistory",
@@ -50,7 +61,13 @@ pub fn isupport() -> Vec<String> {
         "CHANMODES=b,,,nt".to_owned(),
         format!("NICKLEN={NICKLEN}"),
         format!("CHANNELLEN={CHANNELLEN}"),
-        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1".to_owned(),
+        // `MONITOR:` with no limit: Modern §"TARGMAX Parameter" says a
+        // client "SHOULD assume that no commands except the JOIN and
+        // PART commands accept multiple parameters" where a command is
+        // not listed, and MONITOR takes a target list bounded only by
+        // the line (ircv3-monitor.md:56-58). Modern's own example shows
+        // the same empty-limit form, `ACCEPT:,MONITOR:`.
+        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1,MONITOR:".to_owned(),
         format!("LINELEN={MAX_LINE}"),
         "UTF8ONLY".to_owned(),
         "NETWORK=mimid".to_owned(),
@@ -62,6 +79,16 @@ pub fn isupport() -> Vec<String> {
             mimid_agent_store::history::MAX_HISTORY_PAGE
         ),
         "MSGREFTYPES=timestamp,msgid".to_owned(),
+        // How the IRCv3 Monitor spec says support is announced:
+        // "Support of this specification is indicated by the MONITOR
+        // token in RPL_ISUPPORT (005). This token takes an optional
+        // parameter, of the maximum amount of targets a client may have
+        // in their monitor list" (ircv3-monitor.md:60-65). mimid's list
+        // is bounded, so the parameter is always there. No NAMELEN
+        // token: that one belongs to the `setname` capability, which
+        // mimid refuses the command of (crate::command, decision
+        // mimid-1wgh.146).
+        format!("MONITOR={MAX_MONITOR}"),
         // The client-only tags the front end reads; others (`+typing`)
         // would go nowhere (IRCv3 Message Tags, "CLIENTTAGDENY").
         "CLIENTTAGDENY=*,-draft/reply,-reply,-draft/react,-draft/unreact".to_owned(),
@@ -517,5 +544,28 @@ mod tests {
         from_004.sort_unstable();
         assert_eq!(from_004, from_005);
         assert!(tokens.contains(&"draft/ACCOUNTREQUIRED".to_owned()));
+        // How the IRCv3 Monitor spec says support is announced
+        // (ircv3-monitor.md:60-65), with the bound as its parameter,
+        // and `MONITOR:` in TARGMAX because the command takes a list
+        // (Modern §"TARGMAX Parameter"). No NAMELEN, which belongs to
+        // the `setname` capability mimid does not advertise.
+        assert!(
+            tokens.contains(&format!("MONITOR={MAX_MONITOR}")),
+            "{tokens:?}"
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.starts_with("TARGMAX=") && t.contains(",MONITOR:")),
+            "{tokens:?}"
+        );
+        assert!(
+            !tokens.iter().any(|t| t.starts_with("NAMELEN")),
+            "{tokens:?}"
+        );
+        // Neither capability may be offered (ircv3-setname.md:28-30).
+        for absent in ["setname", "extended-monitor"] {
+            assert!(!CAPS.contains(&absent), "{absent}");
+        }
     }
 }

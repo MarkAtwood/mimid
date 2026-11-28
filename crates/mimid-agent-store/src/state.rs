@@ -791,6 +791,7 @@ mod tests {
             display_name: None,
             did: None,
             did_changed_at: None,
+            clients: None,
             first_seen: 0,
             ext: Ext::new(),
         });

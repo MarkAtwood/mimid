@@ -304,16 +304,30 @@ pub fn split_text(text: &str, max: usize) -> Vec<&str> {
 /// gets a line of its own.
 #[must_use]
 pub fn pack_words(words: &[String], room: usize) -> Vec<String> {
+    pack(words, room, ' ')
+}
+
+/// Packs `items` into lines of at most `room` octets each, `sep` between
+/// items; an item longer than `room` gets a line of its own.
+///
+/// `sep` is `' '` for a space-separated list (353 NAMES, CAP LS) and
+/// `','` for a comma-separated one (730 to 734, whose lists the IRCv3
+/// Monitor spec writes `target[,target2]*` and bounds only by the 512
+/// octets of the line). Together the lines hold every item once, in
+/// order.
+#[must_use]
+pub fn pack(items: &[String], room: usize, sep: char) -> Vec<String> {
+    let sep_len = sep.len_utf8();
     let mut lines = Vec::new();
     let mut line = String::new();
-    for word in words {
-        if !line.is_empty() && line.len() + 1 + word.len() > room {
+    for item in items {
+        if !line.is_empty() && line.len() + sep_len + item.len() > room {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
-            line.push(' ');
+            line.push(sep);
         }
-        line.push_str(word);
+        line.push_str(item);
     }
     if !line.is_empty() {
         lines.push(line);
@@ -441,6 +455,33 @@ mod tests {
         assert_eq!(pack_words(&words, 3), ["aa", "bbb", "c", "dddd"]);
         assert_eq!(pack_words(&words, 100), ["aa bbb c dddd"]);
         assert!(pack_words(&[], 10).is_empty());
+    }
+
+    /// Oracle: ircv3-monitor.md:56-58 ("the length of the target list is
+    /// limited only by the buffer size of 512 chars") and :107, :121,
+    /// :133, :146, whose lists are `target[,target2]*`. A 730 or 731 over
+    /// the limit is cut by the client into a nick that is not the one
+    /// sent, so the separator has to be the comma and every line has to
+    /// fit the room.
+    #[test]
+    fn items_pack_into_comma_lists_within_the_room() {
+        let items: Vec<String> = ["aa", "bbb", "c", "dddd"]
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect();
+        assert_eq!(pack(&items, 6, ','), ["aa,bbb", "c,dddd"]);
+        assert_eq!(pack(&items, 3, ','), ["aa", "bbb", "c", "dddd"]);
+        assert_eq!(pack(&items, 100, ','), ["aa,bbb,c,dddd"]);
+        assert!(pack(&[], 10, ',').is_empty());
+        // Every line fits, and the lines hold the items once each, in
+        // order.
+        let many: Vec<String> = (0..100).map(|n| format!("nick-{n}")).collect();
+        let lines = pack(&many, 40, ',');
+        assert!(lines.len() > 1, "{lines:?}");
+        for line in &lines {
+            assert!(line.len() <= 40, "{line:?}");
+        }
+        assert_eq!(lines.join(",").split(',').collect::<Vec<_>>(), many);
     }
 
     /// Oracle: docs/irc-lessons.md "Writing": a line is at most 512

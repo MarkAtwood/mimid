@@ -1121,8 +1121,12 @@ Only caps that are wired up (irc-lessons.md):
 
 Not in v1: `sasl`, `labeled-response`, `batch`, `draft/chathistory`,
 `draft/message-redaction`, `account-notify`, `invite-notify`, `chghost`,
-`setname`, `away-notify`, `multi-prefix`, `draft/read-marker`. Each needs
-work the lessons list, and none is needed to chat. (IRC v2 adds `sasl`, `batch`,
+`away-notify`, `multi-prefix`, `draft/read-marker`. Each needs
+work the lessons list, and none is needed to chat. `setname` is not on
+that list any more and never will be: the verb is answered with a
+refusal, and a server that advertises the capability MUST support the
+command (§7.39). The same goes for `extended-monitor`, which adds
+notifications for four capabilities this front end does not have. (IRC v2 adds `sasl`, `batch`,
 `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
 `draft/message-redaction`, `multi-prefix` and `soju.im/webpush`: §7.25,
 §7.33 to §7.36.)
@@ -1130,7 +1134,10 @@ work the lessons list, and none is needed to chat. (IRC v2 adds `sasl`, `batch`,
 ISUPPORT (005): `CASEMAPPING=ascii`, `CHANTYPES=#&`, `PREFIX=(o)@`,
 `CHANMODES=b,,,nt`, `NICKLEN=30`, `CHANNELLEN=64`, `TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1`,
 `LINELEN=512`, `UTF8ONLY`, `NETWORK=mimid`. Invalid UTF-8 from the client
-is refused with a NOTICE saying the line was not sent.
+is refused with a NOTICE saying the line was not sent. This is the v1
+list and not what the front end sends today, which also carries
+`CHATHISTORY`, `MSGREFTYPES`, `CLIENTTAGDENY`, `draft/ACCOUNTREQUIRED`
+and `MONITOR=100`; `TARGMAX` gained `MONITOR:` with the verb (§7.39).
 
 ### Commands in v1
 
@@ -1163,7 +1170,10 @@ From docs/irc-lessons.md "Must do":
 - **Users**: `WHO` (always ends 315), `WHOIS` (always ends 318, with 401
   first for an unknown nick), `WHOWAS` (class 1 below; always ends 369,
   with 406 first for a nick this run has not given), `ISON`, `USERHOST`,
-  `AWAY` (305 and 306; no 301, since MIMI carries no presence).
+  `AWAY` (305 and 306; no 301, since MIMI carries no presence),
+  `MONITOR` (class 1 below; 730 and 731 report reachability and not
+  presence, which is the same honesty the missing 301 is about, §7.39),
+  `SETNAME` (class 2 below; refused, §7.39).
 - **Messages**: `PRIVMSG` (412 for no text), `NOTICE` (never an error
   answer; to a peer it is sent as a plain message), `TAGMSG` (read and
   dropped).
@@ -1209,11 +1219,14 @@ Each verb gets a row here as it lands. Class 1 so far:
 
 | `WHOWAS` | 314 RPL_WHOWASUSER, 312 RPL_WHOISSERVER, then 369 RPL_ENDOFWHOWAS; 406 ERR_WASNOSUCHNICK then 369 for a nick this run has not given; a single 431 ERR_NONICKNAMEGIVEN with no nick at all | Which MIMI user a nick stands for and since when this run has had it, in 314's parameters and 312's server info. 314 is what WHOIS 311 says of the same user, down to the user URI as the realname, so the two verbs cannot disagree. Not which user a nick used to stand for: see "When a nick was given" in §4 "Names". Modern calls WHOWAS a question about "a nickname which no longer exists", and a mimid nick never stops existing, so answering for a live nick is mimid's own deviation and the only version of the verb with something true to say. The `mimid` service nick is 406, since it stands for no user and must not be shown as one. One nick is read, Modern's `<nick>`, not RFC 2812's comma list, and `<count>` is accepted and not read, there being at most one entry per nick. |
 
+| `MONITOR` | 730 RPL_MONONLINE, 731 RPL_MONOFFLINE, 732 RPL_MONLIST, 733 RPL_ENDOFMONLIST, 734 ERR_MONLISTFULL; 461 for a missing or empty target list, `FAIL MONITOR INVALID_PARAMS` for a modifier the spec does not define, a parameter too many or a target that is no nick here | Whether a nick's user has a client in the MLS group of a room this user shares: reachability, which is a fact mimid holds, and not availability, which MIMI defines nowhere. 730 carries the hostmask, which the spec allows and its Errata says implementations send. Not presence, not reading, not being at the device; and no count, only the yes or no. A participant whose devices a kick removed is reported offline while `NAMES` still lists them, which is the two verbs answering two questions. Nothing is fresher than the last sync. The list is per connection, never persisted, and bounded by 100 (§7.39). |
+
 Each of the first three answers while a sync holds the agent, touching
-neither it nor the store, and each of the four runs only after
+neither it nor the store, and each of the five runs only after
 registration, so a connection that has shown no credential gets 451 and
 learns none of this. `WHOWAS` reads the nicks held in memory and no
-record, so it does not wait on the agent either. Modern
+record, so it does not wait on the agent either; `MONITOR` reads the
+nicks and the records and still not the agent. Modern
 gives `LUSERS` and `LINKS` "Parameters: None", so a parameter is read as
 nothing rather than answered 461 or 402; RFC 2812's `<mask>` and
 `<server mask>` are not these commands. Decision mimid-1wgh.142 carries
@@ -1234,6 +1247,7 @@ Class 2 so far:
 | `SQUIT` | 481 ERR_NOPRIVILEGES | Breaks a server link, and the agent has none. |
 | `KILL` | 481 ERR_NOPRIVILEGES | Closes another client's connection; every nick but this user's belongs to someone at another provider. The user's own other devices go through the service's `forget-device`, a MIMI operation. None of Modern's KILL behaviour happens: no `KILL` to the target, no `QUIT` to their channels, no `ERROR`, no close. |
 | `WALLOPS` | 481 ERR_NOPRIVILEGES | Reaches every user who set mode `w`; there is one user, whose own notices already come from the service nick. Its SHOULD under Modern's "Optional Messages" is declined for that reason. |
+| `SETNAME` | `FAIL SETNAME CANNOT_CHANGE_REALNAME` | Asks to change the realname, which here is the user URI itself: 352's last parameter and 311's both carry it. MIMI has no operation to carry a self-chosen display name, so the only other reading is a name this one connection shows itself, which no peer would ever see. The IRCv3 spec defines the refusal's code, so the answer is that FAIL and not 421 or a numeric; the `setname` capability and the `NAMELEN` token are never sent, which is what makes refusing the command conformant (§7.39). The epic lists this verb in class 1, where it belonged until the drafts were read: there is no mimid fact for it to report. |
 
 The refusal comes before any parameter count, so a bare `OPER` or
 `WALLOPS` is 491 or 481 and never 461: not reading a parameter is what
@@ -2420,16 +2434,21 @@ Added on 2026-11-20:
       `+draft/reply`, is read when `+draft/reply` is absent.
     - **`multi-prefix`** is acknowledged: a member has one prefix at most
       (`@`), so NAMES and WHO already list them all.
-    - **Not offered, and why.** `MONITOR` and `away-notify`: MIMI carries
-      no presence, and Goguma shows no indicator without MONITOR rather
-      than a wrong one. `labeled-response`: optional for Goguma, and
-      docs/irc-lessons.md says to offer it only when every reply carries
-      the label. `soju.im/bouncer-networks`: MIMI has one network
+    - **Not offered, and why.** `away-notify`: MIMI carries no presence,
+      and there is nothing to notify of. `MONITOR` is answered now, as
+      reachability (§7.39): Goguma already sends `MONITOR -` when it
+      closes a query (below), so it will send `MONITOR +` too and show
+      an indicator, and the indicator means "has a client in the group".
+      `labeled-response`: optional for Goguma, and docs/irc-lessons.md
+      says to offer it only when every reply carries the label.
+      `soju.im/bouncer-networks`: MIMI has one network
       (client-survey.md §2). `draft/metadata-2`, `soju.im/FILEHOST`,
-      `draft/pre-away`, `setname`, `extended-join`,
+      `draft/pre-away`, `extended-join`,
       `soju.im/no-implicit-names`: Goguma works without them (it keeps
       pins and mutes on the phone, has no upload, sends AWAY after
-      registration, fills member lists from NAMES). Goguma's WHO of a
+      registration, fills member lists from NAMES). `setname` and
+      `extended-monitor` are the two that must never be offered at all,
+      and §7.39 says why. Goguma's WHO of a
       query's nick expects 0 or 1 replies (`client_controller.dart:287-312`),
       which WHO already gives.
     - Tests: mimid-agent `tests/irc_v2.rs`
@@ -2653,6 +2672,123 @@ Added on 2026-11-20:
     `tests/rehash_no_password_in_logs.rs`, the second being the canary
     over the wire and the log, which fails when the error is logged as a
     `dyn Error` and its source chain written out.
+
+
+39. **`MONITOR` and `SETNAME`: the two IRCv3 verbs, and what presence
+    can honestly mean (bead mimid-1wgh.140.5, decision mimid-1wgh.146).**
+    The specs are ~/PROJECT/IETF/specs/ircv3-monitor.md,
+    ircv3-setname.md and ircv3-standard-replies.md; every number comes
+    from ircdocs-modern-numerics.yml. Neither verb is in the Modern IRC
+    Client Protocol, which only points at the Monitor spec and lists
+    `ISON` among the commands it replaces.
+
+    - **What a 730 means.** That the nick's user has at least one client
+      that is a leaf of the MLS group of a room this user shares with
+      them. MIMI defines no presence, so mimid reports the fact it has:
+      a participant with no clients receives nothing, which is the state
+      room-policy-04 §5 leaves a user in who removed their devices. That
+      is reachability, not availability. A client will label it "online"
+      and a user will read it as "here"; nothing in the protocol can
+      stop that, and the cost of answering the verb at all is that the
+      word on the screen says more than mimid knows. The crate docs, the
+      numeric's own documentation and this item are the only defences.
+    - **The sharp case, and the one the test pins.** `KICK` takes a
+      user's devices out of the group and leaves them a participant
+      (`Store::kick`). After it `NAMES` lists the nick and MONITOR
+      reports it offline. The two verbs answer two questions, and the
+      crate's `# Limitations` says so.
+    - **Where the fact lives.** `Person.clients`, a count on the
+      plaintext record, written by `sync::refresh_clients` under the
+      same moved-epoch gate as the DIDs: both are projections of leaf
+      state, and the plaintext layer holds nothing like either on its
+      own, `Room.participants` coming from the PARTICIPANT_LIST
+      component and not moving when a leaf does. The alternative, having
+      the IRC front end take the agent lock on the MONITOR path, is
+      cheaper to write and has no way to notify on a change, which is
+      most of the verb. Two asymmetries with `refresh_dids` are
+      deliberate: a user absent from every room is set to 0 rather than
+      left as the record has it, because a contact who shares no group
+      is unreachable; and this pass has no second call site on an event,
+      because no event reports the membership change for this device's
+      own Commit on its first attempt, which is exactly the `KICK` above.
+      `Change::PersonChanged` is published whenever the count moves. The
+      JMAP projection does not render the field, so today only IRC shows
+      it; bead mimid-1wgh.148 holds the JMAP side, and mimid-1wgh.149 the one gap the
+      epoch gate has (a room forgotten here moves no epoch).
+    - **The list.** Per connection, on `Session`, keyed by the folded
+      nick and never persisted, so a reconnect starts empty. Bounded by
+      `monitor::MAX_MONITOR` = 100, which 005 advertises as the spec's
+      `MONITOR` token and `TARGMAX` names with no limit of its own. The
+      value is taken from ~/PROJECT/meshIRCd (`monitorLimit = 100`),
+      which is also the spec's example token; it is public and hard to
+      lower.
+    - **Strict decoding, because the spec leaves room.** A target must
+      be a nick this daemon could have given (`names::is_nick`, now
+      public), which is also what disallows the `nick!user@host`
+      subscription the spec rules out so a user cannot be followed
+      across nick changes; one that is not refuses the command with
+      `FAIL MONITOR INVALID_PARAMS`. A modifier the spec does not define
+      gets the same reply, as does a parameter too many, including the
+      two modifiers in one command the spec forbids a client to send. A
+      missing target parameter, and one that was supplied and holds no
+      target, are both 461. `+` is all-or-nothing against the bound: a
+      command that would pass 100 adds nothing and sends 734 naming
+      every target it asked for, because the numeric is for a list that
+      is "full, so the command failed". A target already in the list is
+      not added and not reported, which is the one `+` that answers
+      nothing; `MONITOR S` is how a client re-reads its state. `-` and
+      `C` answer nothing, `L` always ends with 733, `S` never does.
+    - **Lines.** 730, 731, 732 and 734 all carry comma-separated lists
+      that a hundred entries push past 512 octets, so each is packed
+      over as many lines as it needs (`line::pack`). 734's packing is
+      INVENTED, NOT FROM SPEC: the spec shows one 734 and says nothing
+      about a `<targets>` list that does not fit, so mimid repeats the
+      numeric with the same `<limit>` and description, and a client that
+      reads only the first still has a well-formed 734.
+    - **Where mimid differs from meshIRCd**, the independent
+      implementation the limit comes from (main.go:2444-2541): it checks
+      no nick validity, so junk sits in the list; its `MONITOR L` echoes
+      the folded keys rather than what the client sent; its 734 drops the
+      full stop the spec's description has; `+` and `-` with no target
+      and an unknown modifier all return in silence, which a client
+      cannot tell from a dropped line; and it packs nothing, so a long
+      list overruns the 512 octets.
+    - **`SETNAME` is refused.** See class 2 in §4. The spec's own
+      `CANNOT_CHANGE_REALNAME`, with a description naming the reason.
+      This declines the one SHOULD that applies -- "the server SHOULD
+      handle it silently (with no response), as historic implementations
+      did" -- because a user who types `/setname` and gets silence
+      cannot tell it from success. `INVALID_REALNAME` is not used: the
+      refusal is not about the value, which is why the parameter is not
+      read and a bare `SETNAME` is not 461 either.
+    - **Both FAILs go out with no `standard-replies` capability
+      advertised**, as `FAIL METADATA CANNOT_SET` already does: standard
+      replies recommends them to a client that supports the capability
+      and forbids them to no one, and MONITOR defines no reply of its
+      own for any of these cases. Bead mimid-1wgh.140.6 owns the
+      capability list and must add neither `setname` nor
+      `extended-monitor`.
+    - **No credential anywhere.** Both verbs are dispatched from
+      `Session::command`, which a connection reaches only once
+      registration ended; before that `register::unregistered` answers
+      451. Adding a check would be a second authorization boundary for
+      IRC, and there is one (frontend-auth.md §4.1).
+    - Tests: mimid-agent-irc `monitor::tests` (the bound applied before
+      insertion, a target that is no nick, a duplicate under another
+      case), `line::tests::items_pack_into_comma_lists_within_the_room`,
+      `register::tests::isupport_has_the_tokens_the_lessons_ask_for`;
+      mimid-agent `tests/irc.rs`
+      `monitor_answers_the_list_and_its_bound`,
+      `monitor_refuses_a_list_past_its_bound`,
+      `monitor_reports_reachability_not_participation` (two daemons: the
+      kick's flip to 731 with the nick still in NAMES, and a second
+      connection of the same user told nothing),
+      `setname_is_refused_and_never_advertised`,
+      `monitor_and_setname_are_not_answered_before_registration`;
+      mimid-agent-store `tests/groundwork.rs`
+      `a_person_record_counts_the_clients_in_a_shared_group`. Every
+      absence is bounded by a following PING and its PONG, never by a
+      clock.
 
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
