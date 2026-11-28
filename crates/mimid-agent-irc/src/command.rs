@@ -47,6 +47,10 @@
 //!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
 //!   the user URI as the account), `ISON`, `USERHOST`,
 //!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`.
+//! - `ADMIN` (256 to 259, and 402 for a target that is not this server),
+//!   `LUSERS` (251 to 255, 265, 266) and `LINKS` (one 364, then 365)
+//!   answer from the agent's own facts and name no host, no provider and
+//!   no peer (decision mimid-1wgh.142).
 //! - `OPER` is 491 and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` are 481:
 //!   mimid knows the five and none can apply to one user with no server
 //!   link behind the agent, so each answers the numeric that says so
@@ -201,6 +205,15 @@ impl Session {
                     self.numeric("305", &["You are no longer marked as being away"]);
                 }
             }
+            // The three server queries, answered from the agent's own
+            // facts (class 1 of epic mimid-1wgh.140, decision
+            // mimid-1wgh.142). Each runs on a registered and therefore
+            // already authenticated connection, which is why none reads
+            // a credential; and none touches the agent or the store, so
+            // each is answered while a sync holds the agent.
+            "ADMIN" => self.admin(line),
+            "LUSERS" => self.lusers(),
+            "LINKS" => self.links(),
             "MOTD" => self.numeric("422", &["MOTD File is missing"]),
             "KICK" => self.kick(line).await,
             "INVITE" => self.invite(line).await,
@@ -1189,6 +1202,148 @@ impl Session {
             }
         }
         self.numeric("302", &[&replies.join(" ")]);
+    }
+
+    /// ADMIN: who runs this agent and how to reach them, in the four
+    /// replies the Modern IRC Client Protocol §"ADMIN message" names --
+    /// 256 RPL_ADMINME, 257 RPL_ADMINLOC1, 258 RPL_ADMINLOC2 and 259
+    /// RPL_ADMINEMAIL, whose numbers and parameters come from Modern's
+    /// own numerics section and not from RFC 2812.
+    ///
+    /// A `<target>` is answered only when it names this server: `*`, the
+    /// configured server name, the user's own nick or [`SERVICE_NICK`],
+    /// which are the only clients connected here. Any other name is 402
+    /// ERR_NOSUCHSERVER, another wildcard included, because Modern makes
+    /// a client target mean the server that client is connected to and
+    /// every other nick this front end knows belongs to someone at a
+    /// provider, who is connected to no server of mimid's.
+    ///
+    /// The text of 257, 258 and 259 is INVENTED, NOT FROM SPEC: Modern
+    /// says the last parameter of all three varies wildly. 259 carries
+    /// the user's MIMI address where Modern requires an email address,
+    /// which is the one MUST this crate does not meet (see its
+    /// `# Limitations`). Decision mimid-1wgh.142 carries that reading,
+    /// why an empty parameter is no target, and why no mask is matched.
+    fn admin(&mut self, line: &Line) {
+        let me = self.me();
+        let server = self.shared.server.clone();
+        if let Some(target) = line.param(0).filter(|target| !target.is_empty())
+            && target != "*"
+            && !target.eq_ignore_ascii_case(&server)
+            && fold(target) != fold(&me.nick)
+            && fold(target) != SERVICE_NICK
+        {
+            self.numeric("402", &[target, "No such server"]);
+            return;
+        }
+        // 256's `<server>` is optional and goes out as a middle
+        // parameter, before the text Modern lets a server vary.
+        self.numeric("256", &[&server, "Administrative info"]);
+        self.numeric_cut("257", &[&format!("The mimid agent of {}", me.uri)]);
+        self.numeric_cut(
+            "258",
+            &[&format!(
+                "Run by its own user; {} serves this user's identity, not this agent",
+                me.host
+            )],
+        );
+        self.numeric_cut(
+            "259",
+            &[&format!(
+                "{}@{} (a MIMI address, not an email address)",
+                me.user, me.host
+            )],
+        );
+    }
+
+    /// LUSERS: this user, their clients and their channels, in the seven
+    /// numerics Modern §"LUSERS message" lists. That section makes 251
+    /// RPL_LUSERCLIENT and 255 RPL_LUSERME a MUST and 252 RPL_LUSEROP,
+    /// 253 RPL_LUSERUNKNOWN, 254 RPL_LUSERCHANNELS, 265 RPL_LOCALUSERS
+    /// and 266 RPL_GLOBALUSERS a SHOULD; 265 and 266 carry the two
+    /// optional parameters their own numerics make a further SHOULD.
+    /// Modern gives the command "Parameters: None", so nothing the
+    /// client sent is read: RFC 2812's `<mask>` and `<target>` are not
+    /// this command, and reading them would answer 461 or 402 where
+    /// Modern defines no parameter at all.
+    ///
+    /// Which number each one is, and why it is the truthful one here
+    /// (decision mimid-1wgh.142):
+    ///
+    /// - 251: one user, who is invisible, since `MODE <own nick>` answers
+    ///   `221 +i` and 004 advertises `i` as the one user mode; and zero
+    ///   *other* servers, which is Modern's word. meshIRCd counts itself
+    ///   there (`main.go:1676`), so a script written against it reads 0
+    ///   here.
+    /// - 252: no IRC operator exists, which is what a server that
+    ///   answers OPER with 491 must say (decision mimid-1wgh.141).
+    /// - 253: the connections admitted under the agent's caps that have
+    ///   not logged in
+    ///   ([`mimid_agent_store::credentials::limits::Limiter::unauthenticated`]),
+    ///   which is Modern's "unknown state". One that has logged in is in
+    ///   255 instead and in neither for no observable instant: its place
+    ///   under the caps is given up and its place in the registry taken
+    ///   in one turn, with no await between (`crate::register`).
+    /// - 254: the channels this connection shows. A channel exists on
+    ///   this server exactly when a room the user is in has a channel
+    ///   name, and a one-to-one room is a query with no channel name
+    ///   ([`crate::names`]), so it is not counted; LIST walks the same
+    ///   set.
+    /// - 255, 265 and 266: the registered connections of this front end,
+    ///   which is the user's own clients and the multi-device fact IRC
+    ///   has no other place for, with the most seen at one time since
+    ///   the daemon started. There is no server link, so global is
+    ///   local and 266 repeats 265.
+    ///
+    /// 252, 253 and 254 can be 0 where Modern calls each a positive
+    /// integer, and 251 and 255 keep Modern's sentence, which reads "1
+    /// users" for one user: the numbers are in no separate parameter
+    /// there, and the section says a client SHOULD NOT parse that text.
+    fn lusers(&mut self) {
+        let clients = self.shared.session_count().to_string();
+        let peak = self.shared.peak_sessions().to_string();
+        let unknown = self.shared.credentials.limiter().unauthenticated();
+        let channels = self.channels.len();
+        self.numeric("251", &["There are 1 users and 1 invisible on 0 servers"]);
+        self.numeric("252", &["0", "operator(s) online"]);
+        self.numeric("253", &[&unknown.to_string(), "unknown connection(s)"]);
+        self.numeric("254", &[&channels.to_string(), "channels formed"]);
+        self.numeric("255", &[&format!("I have {clients} clients and 0 servers")]);
+        self.numeric(
+            "265",
+            &[
+                &clients,
+                &peak,
+                &format!("Current local users {clients}, max {peak}"),
+            ],
+        );
+        self.numeric(
+            "266",
+            &[
+                &clients,
+                &peak,
+                &format!("Current global users {clients}, max {peak}"),
+            ],
+        );
+    }
+
+    /// LINKS: this server, alone. Modern §"LINKS message" requires zero
+    /// or more 364 RPL_LINKS and then one 365 RPL_ENDOFLINKS, and says a
+    /// server MAY omit any server on the network, itself included, so
+    /// one self-entry is a correct answer for a network of one and the
+    /// way a client learns there is none. Its shape is that section's
+    /// own reply example: `<server1>` and `<server2>` are this server
+    /// and the hopcount is 0, with the server info WHOIS 312 sends.
+    /// 365's first parameter is the literal `*` its numeric gives.
+    ///
+    /// The provider and every peer are left out: they are not IRC
+    /// servers, and naming them would describe mimid's topology to
+    /// anything that asks (bead mimid-1wgh.140.1). Modern gives the
+    /// command "Parameters: None", so nothing the client sent is read.
+    fn links(&mut self) {
+        let server = self.shared.server.clone();
+        self.numeric("364", &[&server, &server, "0 mimid-agent"]);
+        self.numeric("365", &["*", "End of /LINKS list"]);
     }
 
     async fn kick(&mut self, line: &Line) {

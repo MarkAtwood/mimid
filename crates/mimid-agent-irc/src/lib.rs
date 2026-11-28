@@ -40,6 +40,13 @@
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
+//! - **Server queries**: `ADMIN` (256 to 259, and 402 for a target that
+//!   names another server), `LUSERS` (251 to 255, 265, 266) and `LINKS`
+//!   (one 364, then 365) answer with the agent's own facts -- the user
+//!   whose agent it is, their provider's domain, their clients and this
+//!   connection's channels -- and name no host, no path and no peer
+//!   (decision mimid-1wgh.142). `LINKS` lists this server alone, which
+//!   is how a client learns there is no network behind the port.
 //! - **Rooms are channels** (`#name`); the client is joined to every room
 //!   the user is in. JOIN of an unknown name hosts a new room, PART leaves
 //!   the room for good (§7.1). People are nicks `<local>-<label>`
@@ -118,13 +125,31 @@
 //!   `CONNECT` sent as a connection's first line is not answered at all:
 //!   it is taken for HTTP's `CONNECT` method and the connection closes
 //!   in silence.
+//! - `ADMIN`'s 259 RPL_ADMINEMAIL carries the user's MIMI address, not an
+//!   email address, which Modern's numeric requires: an agent has none,
+//!   and the parameter says so in the same breath. It is the one MUST
+//!   this crate does not meet (decision mimid-1wgh.142). `ADMIN` matches
+//!   no mask but the literal `*`, so `ADMIN <server name with a
+//!   wildcard>` is 402 although Modern allows wildcards in the target:
+//!   the crate matches no masks anywhere.
+//! - `LUSERS` counts this front end's IRC connections and the channels
+//!   the asking connection shows, which are the user's clients and rooms
+//!   on IRC and not their JMAP clients or their MLS devices; its 253
+//!   counts the connections admitted under the agent's caps that have
+//!   not logged in, whichever boundary admitted them, since one limiter
+//!   serves the whole agent. 265 and 266 give a maximum since this
+//!   daemon started, which a restart forgets. Nothing caps the
+//!   registered connections, so the number 255, 265 and 266 publish is
+//!   bounded by nothing but the listener.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
 //!   is a `PART` (§7.1), and only a new invite brings the user back.
 //! - A connection waits while the store's sync holds the agent, PING
 //!   included: a PONG is written only once the agent is free, so it says
 //!   the user's next message could have been taken rather than that the
 //!   socket is open (decision mimid-1wgh.132). A client whose ping
-//!   timeout is shorter than a sync gives up during one.
+//!   timeout is shorter than a sync gives up during one. `ADMIN`,
+//!   `LUSERS` and `LINKS` are the exception: they touch neither the
+//!   agent nor the store, so they answer during a sync.
 //! - A connection that falls behind the change feed's log
 //!   ([`mimid_agent_store::TooOld`]) shows its channels again from the
 //!   records and is told that messages in between are not shown.

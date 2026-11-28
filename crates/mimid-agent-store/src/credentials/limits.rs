@@ -181,6 +181,15 @@ impl Limiter {
             source,
         })
     }
+
+    /// How many connections [`Limiter::admit`] let in that have not
+    /// logged in or closed: the count [`MAX_UNAUTHENTICATED`] bounds,
+    /// over every boundary that admits a connection, since one limiter
+    /// serves the whole agent.
+    #[must_use]
+    pub fn unauthenticated(&self) -> usize {
+        self.inner().total
+    }
 }
 
 /// A connection counted against the caps until it logs in or closes.
@@ -274,5 +283,22 @@ mod tests {
         assert!(limiter.admit("198.51.100.1".parse().unwrap()).is_none());
         held.pop();
         assert!(limiter.admit("198.51.100.1".parse().unwrap()).is_some());
+    }
+
+    /// The count of connections not logged in falls as each one logs in
+    /// or closes: a count that only climbed would report half-open
+    /// connections that are gone for the life of the daemon.
+    #[test]
+    fn the_unauthenticated_count_falls_when_a_connection_goes() {
+        let limiter = Arc::new(Limiter::new());
+        assert_eq!(limiter.unauthenticated(), 0);
+        let one = limiter.admit("192.0.2.1".parse().unwrap()).unwrap();
+        let two = limiter.admit("192.0.2.1".parse().unwrap()).unwrap();
+        let three = limiter.admit("198.51.100.1".parse().unwrap()).unwrap();
+        assert_eq!(limiter.unauthenticated(), 3);
+        drop(two);
+        assert_eq!(limiter.unauthenticated(), 2);
+        drop((one, three));
+        assert_eq!(limiter.unauthenticated(), 0);
     }
 }

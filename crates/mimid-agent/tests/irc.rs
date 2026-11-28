@@ -289,12 +289,29 @@ async fn registration_queries_and_refusals() {
         assert!(!irc.seen.iter().any(|m| m.command == "001"));
     }
     // Before a good PASS nothing but registration is read: the refusals
-    // of the operator verbs live in the registered dispatch only, so a
-    // client that has shown no credential gets 451 and not 491 or 481.
-    for refused in ["JOIN #x", "OPER alice secret", "KILL x :y", "WALLOPS :hi"] {
+    // of the operator verbs and the three server queries live in the
+    // registered dispatch only, so a client that has shown no credential
+    // gets 451, and not 491, 481, or the user's URI and their provider's
+    // domain in an ADMIN reply.
+    for refused in [
+        "JOIN #x",
+        "OPER alice secret",
+        "KILL x :y",
+        "WALLOPS :hi",
+        "ADMIN",
+        "LUSERS",
+        "LINKS",
+    ] {
         let mut irc = Irc::connect(addr).await;
         irc.send(refused).await;
         assert_eq!(irc.line().await.command, "451", "{refused}");
+        assert!(
+            !irc.seen
+                .iter()
+                .any(|m| ["256", "251", "364"].contains(&m.command.as_str())),
+            "{refused}: {:?}",
+            irc.seen
+        );
         drop(irc);
     }
     // An HTTP request is closed at once, unanswered. `CONNECT` is one of
@@ -1717,5 +1734,342 @@ async fn burn_and_expire_from_irc() {
 
     drop((a, b));
     bob.stop().await;
+    alice.stop().await;
+}
+
+/// How many `LUSERS` round trips a count is given to rise or fall. A
+/// connection's place in the registry and under the limiter's caps is
+/// taken out when its task ends, which no line of another connection can
+/// be ordered against; each round trip is a full one through the same
+/// front end, so the daemon is demonstrably serving across all of them.
+const LUSERS_ROUND_TRIPS: usize = 200;
+
+/// `LUSERS` on `irc`, and the lines it answered with.
+async fn lusers(irc: &mut Irc) -> Vec<Msg> {
+    irc.send("LUSERS").await;
+    irc.sync().await
+}
+
+/// Sends `LUSERS` until `want` holds of the lines it answered with, at
+/// most [`LUSERS_ROUND_TRIPS`] times.
+async fn lusers_until(irc: &mut Irc, what: &str, want: impl Fn(&[Msg]) -> bool) -> Vec<Msg> {
+    let mut last = Vec::new();
+    for _ in 0..LUSERS_ROUND_TRIPS {
+        last = lusers(irc).await;
+        if want(&last) {
+            return last;
+        }
+    }
+    panic!("{what} in {LUSERS_ROUND_TRIPS} round trips; last {last:#?}");
+}
+
+/// The `code` line of `lines`, which must be the only one.
+fn only<'a>(lines: &'a [Msg], code: &str) -> &'a Msg {
+    let found = numerics(lines, code);
+    assert_eq!(found.len(), 1, "one {code} in {lines:#?}");
+    found[0]
+}
+
+/// ADMIN answers with the agent's own facts and nothing else (bead
+/// mimid-1wgh.140.1, decision mimid-1wgh.142): the four replies Modern's
+/// ADMIN section names, in their numbers from
+/// ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml, with the user's URI,
+/// their provider's domain and their MIMI address, and no path, no bind
+/// address and no peer.
+///
+/// Every parameter is compared, which is what pins the negative claim: a
+/// reply fixed exactly cannot have grown a line about the host. 256's
+/// `<server>` is a middle parameter, so it is pinned on the wire too --
+/// as a trailing one it would still parse into the same `params`.
+///
+/// A target that names no server here is 402, every other wildcard
+/// included: mimid matches no masks, and a nick belonging to a user at
+/// another provider is not a client connected to this server.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn admin_answers_with_the_agents_own_facts() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let (mut irc, _) = Irc::register(alice.irc.unwrap(), &alice.token(), ALICE_NICK, &[]).await;
+
+    let want: Vec<(String, Vec<String>)> = vec![
+        (
+            "256".to_owned(),
+            vec![
+                ALICE_NICK.to_owned(),
+                SERVER.to_owned(),
+                "Administrative info".to_owned(),
+            ],
+        ),
+        (
+            "257".to_owned(),
+            vec![ALICE_NICK.to_owned(), format!("The mimid agent of {ALICE}")],
+        ),
+        (
+            "258".to_owned(),
+            vec![
+                ALICE_NICK.to_owned(),
+                "Run by its own user; a.example serves this user's identity, not this agent"
+                    .to_owned(),
+            ],
+        ),
+        (
+            "259".to_owned(),
+            vec![
+                ALICE_NICK.to_owned(),
+                "alice@a.example (a MIMI address, not an email address)".to_owned(),
+            ],
+        ),
+    ];
+    // No target; the literal `*`; this server by name, in either case;
+    // an empty parameter, which names no server the wire could carry;
+    // the user's own nick and the service nick, the only clients
+    // connected here.
+    for line in [
+        "ADMIN",
+        "ADMIN *",
+        &format!("ADMIN {SERVER}"),
+        "ADMIN MIMID.INVALID",
+        "ADMIN :",
+        &format!("ADMIN {ALICE_NICK}"),
+        "ADMIN mimid",
+    ] {
+        irc.send(line).await;
+        let answer = irc.sync().await;
+        let got: Vec<(String, Vec<String>)> = answer
+            .iter()
+            .map(|m| (m.command.clone(), m.params.clone()))
+            .collect();
+        assert_eq!(got, want, "{line}: {answer:#?}");
+        assert_eq!(
+            answer[0].raw,
+            format!(":{SERVER} 256 {ALICE_NICK} {SERVER} :Administrative info"),
+            "{line}"
+        );
+    }
+
+    // Another server's name, a wildcard that is not `*`, and users at
+    // other providers: 402, the name echoed, and nothing else.
+    for target in [
+        "irc.example.net",
+        "mimid.*",
+        "*.invalid",
+        BOB_NICK,
+        "mimi://far.example/u/zoe",
+        "zoe@far.example",
+    ] {
+        irc.send(&format!("ADMIN {target}")).await;
+        let answer = irc.sync().await;
+        assert_eq!(answer.len(), 1, "{target}: {answer:#?}");
+        assert_eq!(answer[0].command, "402", "{target}: {}", answer[0].raw);
+        assert_eq!(
+            answer[0].params,
+            [ALICE_NICK, target, "No such server"],
+            "{}",
+            answer[0].raw
+        );
+    }
+
+    alice.stop().await;
+}
+
+/// LUSERS counts this user's clients and this connection's channels
+/// (bead mimid-1wgh.140.1, decision mimid-1wgh.142): the seven numerics
+/// Modern's LUSERS section lists, with one user who is invisible (mimid
+/// answers `221 +i`), zero *other* servers, which is Modern's word and
+/// where meshIRCd counts itself, zero operators, the connections not
+/// logged in, the channels shown, and the registered connections with
+/// the most seen at one time.
+///
+/// A one-to-one room is a query and not a channel, so 254 and LIST agree
+/// on the same set: a 254 taken from the records would count it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn lusers_counts_this_users_clients_and_channels() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+    let token = alice.token();
+    let (mut a, _) = Irc::register(addr, &token, ALICE_NICK, &[]).await;
+    a.send("JOIN #lobby").await;
+    joined(&mut a, ALICE_MASK, "#lobby").await;
+
+    // A one-to-one room straight into the records, as
+    // `a_connection_behind_the_feed_resyncs_from_the_records` writes
+    // one: two rooms in the store, one channel on this connection.
+    let direct: Room = serde_json::from_value(json!({
+        "key": alice.store.new_key(),
+        "uri": "mimi://a.example/r/with-zoe",
+        "status": "active",
+        "direct": true,
+        "participants": [
+            {"user": ALICE, "role": 1},
+            {"user": "mimi://far.example/u/zoe", "role": 1},
+        ],
+        "roleNames": {"1": "admin"},
+    }))
+    .unwrap();
+    alice.store.state().insert_room(direct);
+    alice.store.save().await.unwrap();
+    assert_eq!(alice.store.state().rooms.len(), 2);
+
+    let lines = lusers(&mut a).await;
+    let codes: Vec<&str> = lines.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(
+        codes,
+        ["251", "252", "253", "254", "255", "265", "266"],
+        "{lines:#?}"
+    );
+    assert_eq!(
+        lines[0].params,
+        [ALICE_NICK, "There are 1 users and 1 invisible on 0 servers"],
+        "{}",
+        lines[0].raw
+    );
+    assert_eq!(lines[1].params, [ALICE_NICK, "0", "operator(s) online"]);
+    assert_eq!(lines[2].params, [ALICE_NICK, "0", "unknown connection(s)"]);
+    assert_eq!(lines[3].params, [ALICE_NICK, "1", "channels formed"]);
+    assert_eq!(
+        lines[4].params,
+        [ALICE_NICK, "I have 1 clients and 0 servers"],
+        "{}",
+        lines[4].raw
+    );
+    assert_eq!(
+        lines[5].params,
+        [ALICE_NICK, "1", "1", "Current local users 1, max 1"]
+    );
+    assert_eq!(
+        lines[6].params,
+        [ALICE_NICK, "1", "1", "Current global users 1, max 1"]
+    );
+    // The channels 254 counts are the ones LIST walks.
+    a.send("LIST").await;
+    let listed = a.sync().await;
+    assert_eq!(numerics(&listed, "322").len(), 1, "{listed:#?}");
+
+    // A connection that has not logged in is an unknown connection.
+    let idle = Irc::connect(addr).await;
+    let seen = lusers_until(&mut a, "253 counts the idle connection", |lines| {
+        only(lines, "253").params[1] == "1"
+    })
+    .await;
+    assert_eq!(only(&seen, "253").params[1], "1");
+    assert_eq!(
+        only(&seen, "255").params[1],
+        "I have 1 clients and 0 servers"
+    );
+    drop(idle);
+
+    // A second client of the same user: 255, 265 and 266 say two, and
+    // the high-water mark follows.
+    let (b, _) = Irc::register(addr, &token, "alice", &[]).await;
+    let seen = lusers_until(&mut a, "two clients and no unknown connection", |lines| {
+        only(lines, "255").params[1] == "I have 2 clients and 0 servers"
+            && only(lines, "253").params[1] == "0"
+    })
+    .await;
+    assert_eq!(
+        only(&seen, "265").params,
+        [ALICE_NICK, "2", "2", "Current local users 2, max 2"]
+    );
+    assert_eq!(
+        only(&seen, "266").params,
+        [ALICE_NICK, "2", "2", "Current global users 2, max 2"]
+    );
+
+    // The count falls when that client goes; the maximum does not.
+    drop(b);
+    let seen = lusers_until(&mut a, "the client count falls", |lines| {
+        only(lines, "265").params[1] == "1"
+    })
+    .await;
+    assert_eq!(
+        only(&seen, "265").params,
+        [ALICE_NICK, "1", "2", "Current local users 1, max 2"]
+    );
+    assert_eq!(
+        only(&seen, "255").params[1],
+        "I have 1 clients and 0 servers"
+    );
+
+    // Modern gives LUSERS "Parameters: None", so RFC 2812's mask and
+    // target are read as nothing: no 461 and no 402.
+    a.send("LUSERS mask mimid.invalid").await;
+    let surplus = a.sync().await;
+    let bare = lusers(&mut a).await;
+    let raw = |lines: &[Msg]| -> Vec<String> { lines.iter().map(|m| m.raw.clone()).collect() };
+    assert_eq!(raw(&surplus), raw(&bare));
+
+    alice.stop().await;
+}
+
+/// LINKS answers with this server alone (bead mimid-1wgh.140.1, decision
+/// mimid-1wgh.142): Modern's LINKS section requires zero or more 364 and
+/// then one 365, and lets a server omit any server on the network,
+/// itself included, so one self-entry is the whole answer for a network
+/// of one. A 364 per room, per peer or per provider is the disclosure
+/// the bead forbids, and 365's first parameter is the literal `*`.
+///
+/// With a peer at another provider in the records, nothing in any of the
+/// three server queries names the data directory, the bind address, the
+/// listener's port or that peer's domain.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn links_answers_with_this_server_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+    let direct: Room = serde_json::from_value(json!({
+        "key": alice.store.new_key(),
+        "uri": "mimi://a.example/r/with-zoe",
+        "status": "active",
+        "direct": true,
+        "participants": [
+            {"user": ALICE, "role": 1},
+            {"user": "mimi://far.example/u/zoe", "role": 1},
+        ],
+        "roleNames": {"1": "admin"},
+    }))
+    .unwrap();
+    alice.store.state().insert_room(direct);
+    alice.store.save().await.unwrap();
+    let (mut irc, _) = Irc::register(addr, &alice.token(), ALICE_NICK, &[]).await;
+
+    irc.send("LINKS").await;
+    let answer = irc.sync().await;
+    assert_eq!(answer.len(), 2, "{answer:#?}");
+    assert_eq!(
+        answer[0].raw,
+        format!(":{SERVER} 364 {ALICE_NICK} {SERVER} {SERVER} :0 mimid-agent")
+    );
+    assert_eq!(
+        answer[1].params,
+        [ALICE_NICK, "*", "End of /LINKS list"],
+        "{}",
+        answer[1].raw
+    );
+    // "Parameters: None": a remote server and a server mask are read as
+    // nothing.
+    irc.send("LINKS *.example x").await;
+    let surplus = irc.sync().await;
+    assert_eq!(surplus, answer, "{surplus:#?}");
+
+    irc.send("ADMIN").await;
+    irc.send("LUSERS").await;
+    irc.send("LINKS").await;
+    let said = irc.sync().await;
+    let port = addr.port().to_string();
+    for line in &said {
+        for secret in [
+            dir.path().to_str().unwrap(),
+            "127.0.0.1",
+            &port,
+            "far.example",
+        ] {
+            assert!(!line.raw.contains(secret), "{secret:?} in {}", line.raw);
+        }
+    }
+
     alice.stop().await;
 }

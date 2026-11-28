@@ -1142,6 +1142,10 @@ From docs/irc-lessons.md "Must do":
 - **Messages**: `PRIVMSG` (412 for no text), `NOTICE` (never an error
   answer; to a peer it is sent as a plain message), `TAGMSG` (read and
   dropped).
+- **Server queries** (class 1 below): `ADMIN` (256 to 259, and 402 for a
+  target naming another server), `LUSERS` (251 to 255, 265, 266) and
+  `LINKS` (one 364, then 365). Each answers from the agent's own facts
+  and names no host, no path and no peer.
 - **Other**: `QUIT` (`ERROR :Closing Link` first). A verb mimid does not
   know gets 421; a verb it knows and cannot apply gets the numeric that
   says so, by class below.
@@ -1168,7 +1172,29 @@ answer for a verb outside Modern altogether.
 3. **The daemon's own operation**, where IRC's verb happens to fit what
    the daemon can do.
 
-Each verb gets a row here as it lands. Class 2 so far:
+Each verb gets a row here as it lands. Class 1 so far:
+
+| Verb | Answer | What it may say, and may not |
+|---|---|---|
+| `ADMIN` | 256 RPL_ADMINME, 257 RPL_ADMINLOC1, 258 RPL_ADMINLOC2, 259 RPL_ADMINEMAIL; 402 ERR_NOSUCHSERVER for a target that names another server | The user whose agent this is (257, by user URI), their provider's domain and that the user runs the agent (258), and how to reach that administrator (259, the user's MIMI address, labelled as not an email). No path, no bind address, no version, no peer. The three texts are INVENTED, NOT FROM SPEC: Modern fixes none of them. A target is this server when it is absent, `*`, the server name, the user's own nick or `mimid`; any other name, another wildcard included, is 402, because a nick mimid knows otherwise belongs to a user at a provider who is connected to no server here. |
+| `LUSERS` | 251 RPL_LUSERCLIENT, 252 RPL_LUSEROP, 253 RPL_LUSERUNKNOWN, 254 RPL_LUSERCHANNELS, 255 RPL_LUSERME, 265 RPL_LOCALUSERS, 266 RPL_GLOBALUSERS | One user, invisible (mimid answers `221 +i`), on zero *other* servers; zero operators, since OPER is 491; the connections admitted and not logged in; the channels this connection shows, a one-to-one room being a query and not a channel; and the user's clients, which is the multi-device fact IRC has nowhere else, with the most seen at one time since the daemon started. Not the user's MLS devices and not their JMAP clients: the plaintext layer knows the first not at all and counts the second nowhere. |
+| `LINKS` | one 364 RPL_LINKS, then 365 RPL_ENDOFLINKS | This server alone: `<server1>` and `<server2>` both this server, hopcount 0, the server info WHOIS 312 sends. Modern lets a server omit any server on the network, itself included, so one self-entry is the true answer for a network of one and the way a client learns there is none. Not the provider and not a peer: they are not IRC servers, and listing them would describe mimid's topology to anything that asks. |
+
+Each of the three answers while a sync holds the agent, touching neither
+it nor the store, and each runs only after registration, so a connection
+that has shown no credential gets 451 and learns none of this. Modern
+gives `LUSERS` and `LINKS` "Parameters: None", so a parameter is read as
+nothing rather than answered 461 or 402; RFC 2812's `<mask>` and
+`<server mask>` are not these commands. Decision mimid-1wgh.142 carries
+the readings, including the unmet MUST in 259 and why only the literal
+`*` is matched.
+
+`LUSERS` is answered as a command and is not in the registration burst.
+Modern's registration sequence does not include 251 to 255, and the
+burst's shape is pinned by `registration_queries_and_refusals`; meshIRCd
+sends LUSERS from inside `tryRegister` (main.go:1615) and mimid does not.
+
+Class 2 so far:
 
 | Verb | Answer | Why it cannot apply |
 |---|---|---|

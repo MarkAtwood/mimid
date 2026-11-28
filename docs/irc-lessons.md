@@ -236,7 +236,9 @@ read for what it sends and expects. Details are in agent-frontends.md
   knows and cannot apply answers the numeric that says so instead: in
   mimid, OPER is 491 and CONNECT, SQUIT, KILL and WALLOPS are 481
   (decision mimid-1wgh.141, and the class table in
-  docs/design/agent-frontends.md §4).
+  docs/design/agent-frontends.md §4). A verb it can answer truthfully is
+  answered: ADMIN, LUSERS and LINKS reply with the agent's own facts
+  (decision mimid-1wgh.142).
 
 ### Messages
 

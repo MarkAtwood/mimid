@@ -59,6 +59,10 @@ pub(crate) struct Shared {
     sessions: Mutex<BTreeMap<u64, SessionInfo>>,
     /// The next session id; ids are never reused.
     next_session: std::sync::atomic::AtomicU64,
+    /// The most connections registered at one time since the daemon
+    /// started, which LUSERS gives as the maximum of 265 and 266
+    /// (`crate::command`).
+    peak_sessions: std::sync::atomic::AtomicUsize,
 }
 
 /// One registered connection, as `/msg mimid tailnet` lists it.
@@ -112,6 +116,7 @@ impl Shared {
             peer_identity: std::sync::OnceLock::new(),
             sessions: Mutex::new(BTreeMap::new()),
             next_session: std::sync::atomic::AtomicU64::new(1),
+            peak_sessions: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -158,16 +163,36 @@ impl Shared {
             .collect()
     }
 
+    /// How many connections are registered.
+    pub(crate) fn session_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// The most connections that were registered at one time since the
+    /// daemon started.
+    pub(crate) fn peak_sessions(&self) -> usize {
+        self.peak_sessions
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Adds `info` to the registry; the place is taken out when the
     /// returned guard drops.
     pub(crate) fn register(self: &Arc<Self>, info: SessionInfo) -> Registered {
         let id = self
             .next_session
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.sessions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, info);
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+            sessions.insert(id, info);
+            // Raised under the registry's own lock, so the mark cannot
+            // miss a connection that registered between the insert and
+            // the read.
+            self.peak_sessions
+                .fetch_max(sessions.len(), std::sync::atomic::Ordering::Relaxed);
+        }
         Registered {
             shared: Arc::clone(self),
             id,
