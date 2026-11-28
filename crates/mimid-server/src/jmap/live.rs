@@ -106,6 +106,10 @@ pub(super) async fn get_live(
 /// What the writer task sends.
 enum Out {
     Frame(Vec<u8>),
+    /// A WebSocket Ping, so an idle connection is probed and a middlebox
+    /// that reaps idle carriers has something to see (decision
+    /// mimid-1wgh.133).
+    Ping,
     Close,
 }
 
@@ -121,6 +125,19 @@ impl Sender {
 
     async fn error(&self, error: ErrorMessage) -> bool {
         self.send(&ProviderMessage::Error(error)).await
+    }
+
+    /// Queues a Ping, or `false` once the client is gone.
+    ///
+    /// `try_send`, not `send`: a full queue means the client is not
+    /// reading what it already has, so a probe would tell us nothing and
+    /// waiting for room would park the connection's own loop. The socket
+    /// stops accepting writes soon enough.
+    fn ping(&self) -> bool {
+        !matches!(
+            self.0.try_send(Out::Ping),
+            Err(mpsc::error::TrySendError::Closed(_))
+        )
     }
 
     /// Sends a connection-level `Error` with `code`, then closes.
@@ -141,6 +158,11 @@ async fn connection(state: JmapState, socket: WebSocket) {
                         break;
                     }
                 }
+                Out::Ping => {
+                    if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                        break;
+                    }
+                }
                 Out::Close => {
                     let _ = sink.send(Message::Close(None)).await;
                     break;
@@ -151,12 +173,14 @@ async fn connection(state: JmapState, socket: WebSocket) {
     });
     let sender = Sender(out);
     if let Some((account, token)) = hello(&state, &sender, &mut source).await {
+        let ping_after = state.0.live_ping_after;
         Connection {
             state,
             sender: sender.clone(),
             account,
             token,
             outstanding: Arc::new(AtomicUsize::new(0)),
+            ping_after,
         }
         .run(&mut source)
         .await;
@@ -168,28 +192,36 @@ async fn connection(state: JmapState, socket: WebSocket) {
 
 type Source = futures_util::stream::SplitStream<WebSocket>;
 
-/// The next binary frame, or `None` when the connection should end (the
-/// client closed, sent a text frame, or the socket failed).
-async fn next_frame(source: &mut Source, sender: &Sender) -> Option<Vec<u8>> {
-    loop {
-        match source.next().await? {
-            Ok(Message::Binary(bytes)) => return Some(bytes.to_vec()),
-            Ok(Message::Ping(_) | Message::Pong(_)) => {}
-            Ok(Message::Text(_)) => {
-                tracing::debug!("live stream: text frame, closing");
-                sender.fail(code::BAD_MESSAGE).await;
-                return None;
-            }
-            Ok(Message::Close(_)) => return None,
-            Err(error) => {
-                tracing::debug!(
-                    error = &error as &dyn std::error::Error,
-                    "live stream: read failed"
-                );
-                // Most likely a frame past the WebSocket layer's limit.
-                sender.fail(code::TOO_LARGE).await;
-                return None;
-            }
+/// What one read gave.
+enum Frame {
+    /// A binary frame, the only kind that carries a message.
+    Binary(Vec<u8>),
+    /// A Ping or a Pong: nothing to handle. The WebSocket layer has
+    /// already answered a Ping, and a Pong answers ours; either way the
+    /// client's read loop is turning, which is what the keepalive asks.
+    Alive,
+}
+
+/// The next frame, or `None` when the connection should end (the client
+/// closed, sent a text frame, or the socket failed).
+async fn next_frame(source: &mut Source, sender: &Sender) -> Option<Frame> {
+    match source.next().await? {
+        Ok(Message::Binary(bytes)) => Some(Frame::Binary(bytes.to_vec())),
+        Ok(Message::Ping(_) | Message::Pong(_)) => Some(Frame::Alive),
+        Ok(Message::Text(_)) => {
+            tracing::debug!("live stream: text frame, closing");
+            sender.fail(code::BAD_MESSAGE).await;
+            None
+        }
+        Ok(Message::Close(_)) => None,
+        Err(error) => {
+            tracing::debug!(
+                error = &error as &dyn std::error::Error,
+                "live stream: read failed"
+            );
+            // Most likely a frame past the WebSocket layer's limit.
+            sender.fail(code::TOO_LARGE).await;
+            None
         }
     }
 }
@@ -201,12 +233,21 @@ async fn hello(
     sender: &Sender,
     source: &mut Source,
 ) -> Option<(Account, String)> {
-    let Ok(frame) = tokio::time::timeout(HELLO_TIMEOUT, next_frame(source, sender)).await else {
-        tracing::debug!("live stream: no ClientHello in time");
-        sender.fail(code::BAD_MESSAGE).await;
-        return None;
+    // One deadline for the whole exchange, not one per read: a client
+    // that sent nothing but Pings would otherwise hold the connection
+    // open for as long as it liked.
+    let by = tokio::time::Instant::now() + HELLO_TIMEOUT;
+    let frame = loop {
+        let Ok(frame) = tokio::time::timeout_at(by, next_frame(source, sender)).await else {
+            tracing::debug!("live stream: no ClientHello in time");
+            sender.fail(code::BAD_MESSAGE).await;
+            return None;
+        };
+        match frame? {
+            Frame::Binary(frame) => break frame,
+            Frame::Alive => {}
+        }
     };
-    let frame = frame?;
     if frame.len() > MAX_REQUEST_BYTES {
         sender.fail(code::TOO_LARGE).await;
         return None;
@@ -273,6 +314,9 @@ struct Connection {
     account: Account,
     token: String,
     outstanding: Arc<AtomicUsize>,
+    /// How long this connection may be quiet before it is probed
+    /// ([`JmapOptions::live_ping_after`](super::JmapOptions)).
+    ping_after: std::time::Duration,
 }
 
 /// The subscription of a connection: the last Message state sent and the
@@ -289,6 +333,9 @@ impl Connection {
         let mut changes = self.state.0.bus.subscribe();
         let mut subscription: Option<Subscription> = None;
         let mut stop = self.state.0.stop.clone();
+        // Whether a Ping is outstanding: set when one goes out, cleared
+        // by anything received.
+        let mut probed = false;
         loop {
             let stopping = async {
                 match stop.as_mut() {
@@ -310,9 +357,31 @@ impl Connection {
                     self.sender.fail(code::UNAUTHORIZED).await;
                     return;
                 }
+                // A quiet connection is probed, and one that has said
+                // nothing since the previous probe is dead: a reaped
+                // carrier and a crashed agent look the same from here,
+                // and both end the same way (decision mimid-1wgh.133).
+                // The sleep starts again on every turn of this loop, so
+                // a connection that is doing work is never probed.
+                () = tokio::time::sleep(self.ping_after) => {
+                    if probed {
+                        tracing::debug!(
+                            account_id = self.account.account_id(),
+                            "live stream closed: no answer to the Ping"
+                        );
+                        return;
+                    }
+                    if !self.sender.ping() {
+                        return;
+                    }
+                    probed = true;
+                }
                 frame = next_frame(source, &self.sender) => {
                     let Some(frame) = frame else { return };
-                    if !self.frame(&frame, &mut subscription).await {
+                    probed = false;
+                    if let Frame::Binary(frame) = frame
+                        && !self.frame(&frame, &mut subscription).await
+                    {
                         return;
                     }
                 }

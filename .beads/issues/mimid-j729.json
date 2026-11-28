@@ -1,0 +1,25 @@
+{
+  "id": "mimid-j729",
+  "title": "The live stream has no keepalive at all",
+  "description": "Found while wiring the front ends' keepalives to what they claim (decision mimid-1wgh.132).\n\nTODAY. mimid's own binding (docs/design/binary-live-stream.md) has no keepalive in either direction. ClientMessage is Hello or Request; ProviderMessage is Hello, Ack, Error, Deliver, Position or Changed (crates/mimid-live/src/message.rs). Nothing in mimid ever sends a WebSocket Ping: the only construction of Message::Ping in the tree is a match arm in a test. Received Ping and Pong frames are dropped unread on both sides (crates/mimid-server/src/jmap/live.rs, crates/mimid-agent-core/src/stream.rs), tungstenite having already answered the Ping inside the library. The only timeouts are HELLO_TIMEOUT for the first frame and the agent's per-request TIMEOUT.\n\nSO. An idle stream that a middlebox has reaped looks exactly like an idle stream that is fine, until the next request times out. A library Pong is the least meaningful answer available: it is written by the WebSocket layer before any mimid code sees the frame, so it says the socket is open and nothing about whether the provider can serve.\n\nOPTIONS, none chosen; this needs a decision.\n1. Nothing: the per-request timeout is the liveness signal, and a dead idle stream costs one failed request plus a reconnect. Cheapest, and honest as long as it is written down.\n2. An application-level probe in the binding: a new OpKind the client sends and the provider answers after reading the room state, so the answer means the provider can serve. Costs a version bump, the CDDL, the codec, both ends and the tests, and it is mimid's own invention until MIMI has one (bead mimid-f9x4).\n3. Transport Pings sent by mimid on a schedule, answered by the far side's library. Detects a reaped carrier and nothing else, which may be exactly what a middlebox problem needs.\n\nOption 2 is the one that answers 'are you working'; option 3 is the one that answers 'is the pipe still there'. They are different questions and a binding may want both.",
+  "notes": "DONE as option 3, per Mark 2026-11-27: 'transport ping for the live stream, send it ourselves'. Decision mimid-1wgh.133 records the choice and what it does and does not assert. Both ends probe at mimid_live::PING_AFTER (30 s) and end a connection that has sent nothing by the next probe; the provider's interval is JmapOptions::live_ping_after so tests probe in milliseconds. Tests: a_quiet_connection_is_pinged and a_connection_that_answers_no_ping_is_closed in crates/mimid-server/tests/live_stream.rs, both of which hang without the probe (shown, terminated at 90 s). The agent's side has no knob and no timing test, as the IRC keepalive has none.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T22:53:54.78582792Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-27T23:24:49.081303883Z",
+  "closed_at": "2026-11-27T23:24:49.081303883Z",
+  "close_reason": "Transport Pings both ends, decision mimid-1wgh.133.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-j729",
+      "depends_on_id": "mimid-w8ye",
+      "type": "discovered-from",
+      "created_at": "2026-11-27T22:53:54.938027942Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -42,6 +42,8 @@ pub use message::{
     Request,
 };
 
+use std::time::Duration;
+
 /// The stream version this crate speaks (`v`).
 pub const VERSION: u64 = 1;
 
@@ -60,6 +62,19 @@ pub const MAX_REQUEST_BYTES: usize = 2 * 4 * 1024 * 1024 + 64 * 1024;
 /// The most requests a client may have outstanding on one connection
 /// (decision mimid-1wgh.78). INVENTED, NOT FROM SPEC.
 pub const MAX_OUTSTANDING: usize = 16;
+
+/// How long either end lets the connection go quiet before it sends a
+/// WebSocket Ping, and how long it then waits: nothing received by the
+/// next probe ends the connection, so a dead carrier is noticed within
+/// twice this (decision mimid-1wgh.133). INVENTED, NOT FROM SPEC, and
+/// not MIMI's: MIMI defines no keepalive at all, so this is the
+/// transport's own (RFC 6455 §5.5.2), which proves the far end's read
+/// loop is turning and nothing more.
+///
+/// Chosen under 60 seconds because that is where deployed NATs and load
+/// balancers reap an idle TCP connection, whatever RFC 5382 §5 asked
+/// for.
+pub const PING_AFTER: Duration = Duration::from_secs(30);
 
 /// The endpoint path, relative to the provider's base URL (decision
 /// mimid-1wgh.77). INVENTED, NOT FROM SPEC.

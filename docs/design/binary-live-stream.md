@@ -162,6 +162,24 @@ for the user to hubs. So these parts of Agora do not apply:
   not a provider push proxy (decision mimid-1wgh.12.30);
 - relay federation and gossip; providers federate with protocol-07.
 
+**The keepalive is the transport's, and both ends send it** (decision
+mimid-1wgh.133). The binding's own messages have no ping: `ClientMessage`
+is `Hello` or `Request` and `ProviderMessage` is `Hello`, `Ack`, `Error`,
+`Deliver`, `Position` or `Changed`, and that is unchanged. Instead each
+end sends a WebSocket Ping (RFC 6455 §5.5.2) after `PING_AFTER` of quiet
+-- 30 seconds, under the 60 where deployed NATs and load balancers reap
+an idle TCP connection -- and ends the connection if nothing at all has
+arrived by the next probe, so a dead carrier is noticed within a minute.
+Any frame counts as a sign of life, a Pong included: a far end answers a
+Ping only while it is reading, so a Pong proves its read loop is turning.
+
+What that asserts is that the pipe is there and the far end is reading,
+and not that the provider can serve a request. A provider wedged behind
+its database still answers Pings. The probe that would assert the second
+thing belongs in MIMI, which defines no keepalive at all (protocol-07 and
+the other drafts have no ping, pong, heartbeat or liveness in them; bead
+mimid-f9x4 drafts what one would have to say).
+
 ## 5. Version 1
 
 ### 5.1 Endpoint

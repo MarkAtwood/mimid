@@ -87,7 +87,7 @@ The file is TOML. Parsing is strict: an unknown key in any table is an error, an
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `server_url` | string | required | The base URL of the user's mimid server, starting with `http://` or `https://`. The agent reads the JMAP Session at `<server_url>/.well-known/jmap`. |
-| `binding` | `"jmap"` or `"stream"` | `"jmap"` | How the agent talks to the server. `stream` uses mimid's live stream at `<server_url>/mimid/live`, which the server must have on (`live_stream = true`). |
+| `binding` | `"jmap"` or `"stream"` | `"jmap"` | How the agent talks to the server. `stream` uses mimid's live stream at `<server_url>/mimid/live`, which the server must have on (`live_stream = true`). A stream quiet for 30 seconds is sent a WebSocket Ping, and one that answers nothing by the next probe is dropped and opened again, so a carrier a NAT has reaped costs a reconnect rather than a lost push (decision mimid-1wgh.133). The server probes the same way. There is no setting for the interval. |
 | `user_uri` | string | required | The user's URI, `mimi://<domain>/u/<id>`. |
 | `token_file` | path | required | The file holding the user's bearer token at `server_url`, as `mimid admin ... token` issued it, without the JSON around it. |
 | `state_dir` | path | required | The agent's state directory. See [Files](#files). |

@@ -91,6 +91,11 @@ type Answer = Result<AckResult, ErrorMessage>;
 
 /// The state one connection's reader shares.
 struct Shared {
+    /// How many frames of any kind have arrived, so the writer can tell
+    /// whether anything came back since its last Ping (decision
+    /// mimid-1wgh.133). A count and not a clock: the question is only
+    /// whether the far end spoke, not when.
+    heard: AtomicU64,
     pending: Mutex<HashMap<u64, (OpKind, oneshot::Sender<Answer>)>>,
     feed: Mutex<Feed>,
     alive: AtomicBool,
@@ -193,6 +198,7 @@ impl Connection {
             Err(e) => return Err(stream_error(WHAT, e.error.to_string())),
         };
         let shared = Arc::new(Shared {
+            heard: AtomicU64::new(0),
             pending: Mutex::default(),
             feed: Mutex::default(),
             alive: AtomicBool::new(true),
@@ -200,12 +206,37 @@ impl Connection {
         let (out, mut queue) = mpsc::channel::<Out>(OUT_BUFFER);
         let writer_shared = Arc::clone(&shared);
         let writer = tokio::spawn(async move {
-            while let Some(out) = queue.recv().await {
-                let Out::Frame(frame) = out else {
-                    break;
-                };
-                if sink.send(Message::Binary(frame.into())).await.is_err() {
-                    break;
+            // The count of frames heard when the last Ping went out, or
+            // `None` while none is outstanding. A stream with nothing to
+            // say is probed every PING_AFTER; one that has said nothing
+            // by the next probe is gone, whether the agent's carrier was
+            // reaped by a middlebox or the provider died (decision
+            // mimid-1wgh.133). The sleep starts again whenever this
+            // writer sends something, so a busy stream is never probed.
+            let mut probed: Option<u64> = None;
+            loop {
+                tokio::select! {
+                    out = queue.recv() => {
+                        let Some(Out::Frame(frame)) = out else {
+                            break;
+                        };
+                        if sink.send(Message::Binary(frame.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    () = tokio::time::sleep(mimid_live::PING_AFTER) => {
+                        let heard = writer_shared.heard.load(Ordering::SeqCst);
+                        if probed == Some(heard) {
+                            tracing::debug!(
+                                "the live stream answered no Ping; closing it"
+                            );
+                            break;
+                        }
+                        if sink.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            break;
+                        }
+                        probed = Some(heard);
+                    }
                 }
             }
             writer_shared.alive.store(false, Ordering::SeqCst);
@@ -216,6 +247,9 @@ impl Connection {
         let wake = Arc::clone(wake);
         let reader = tokio::spawn(async move {
             while let Some(frame) = source.next().await {
+                // Anything at all, a Pong included, says the provider is
+                // still there: that is what the writer's probe asks.
+                reader_shared.heard.fetch_add(1, Ordering::SeqCst);
                 let Ok(Message::Binary(bytes)) = frame else {
                     match frame {
                         Ok(Message::Ping(_) | Message::Pong(_)) => continue,

@@ -42,6 +42,13 @@ struct Server {
 /// a.example's stack as main.rs wires it, with the live stream `on` or
 /// off, and Alice's account.
 async fn server(on: bool) -> Server {
+    server_pinged(on, mimid_live::PING_AFTER).await
+}
+
+/// [`server`], probing a quiet connection every `ping_after` instead of
+/// at the deployed interval, so the keepalive tests take milliseconds
+/// (decision mimid-1wgh.133).
+async fn server_pinged(on: bool, ping_after: std::time::Duration) -> Server {
     let dir = tempfile::tempdir().unwrap();
     let domain = Domain::try_from("a.example".to_owned()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -85,6 +92,7 @@ async fn server(on: bool) -> Server {
     let token = store.issue_token(&account, 2).await.unwrap();
     let mut options = JmapOptions::default();
     options.live_stream = on;
+    options.live_ping_after = ping_after;
     options.message_retention = Some(3600);
     // Two KeyMaterial/fetch calls, then one an hour (bead mimid-e64f.21).
     options.key_material_limit = Some(mimid_server::jmap::rate::RateLimit {
@@ -847,5 +855,57 @@ async fn key_material_over_the_limit_is_rate_limited_on_both_bindings() {
             );
         }
         other => panic!("{other:?}"),
+    }
+}
+
+/// How long a quiet connection waits for its probe in the two keepalive
+/// tests. Short enough to be quick, long enough that the hello before it
+/// is not raced on a loaded machine.
+const PROBE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// The provider probes a quiet connection with a WebSocket Ping
+/// (decision mimid-1wgh.133). Version 1 of the stream has no keepalive
+/// of its own and MIMI defines none, so the probe is the transport's: it
+/// shows the far end's read loop is turning, and it gives a middlebox
+/// that reaps idle carriers something to see.
+///
+/// The Ping is the event waited for, so a provider that never probes
+/// hangs this test rather than failing it on a loaded machine.
+#[tokio::test]
+async fn a_quiet_connection_is_pinged() {
+    let server = server_pinged(true, PROBE).await;
+    let mut socket = server.open().await;
+    loop {
+        match socket.next().await {
+            Some(Ok(Message::Ping(payload))) => {
+                assert!(payload.is_empty(), "{payload:?}");
+                return;
+            }
+            Some(Ok(_)) => {}
+            other => panic!("the connection ended before any Ping: {other:?}"),
+        }
+    }
+}
+
+/// A connection that answers no Ping is closed. Not polling the socket
+/// is what makes it silent: the WebSocket layer answers a Ping while a
+/// client is reading, so a client that reads nothing sends nothing, as a
+/// client whose carrier a middlebox reaped does.
+///
+/// The sleep is the input, not a deadline on an answer: it is how long
+/// this client stays silent. The assertion after it waits for the close
+/// with no deadline at all, so a provider that keeps the connection
+/// forever hangs the test.
+#[tokio::test]
+async fn a_connection_that_answers_no_ping_is_closed() {
+    let server = server_pinged(true, PROBE).await;
+    let mut socket = server.open().await;
+    tokio::time::sleep(PROBE * 4).await;
+    loop {
+        match socket.next().await {
+            Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Binary(_))) => {}
+            None | Some(Ok(Message::Close(_))) | Some(Err(_)) => return,
+            Some(Ok(other)) => panic!("unexpected frame: {other:?}"),
+        }
     }
 }
