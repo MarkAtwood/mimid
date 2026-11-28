@@ -1,0 +1,22 @@
+{
+  "id": "mimid-604m.8",
+  "title": "open_direct takes the agent twice, and a sync between the two makes a second room",
+  "description": "Store::open_direct (crates/mimid-agent-store/src/action.rs) looks for\nthe one-to-one room three times and holds the agent for only two of\nthem:\n\n  1. Store::direct_room, over the records, no agent lock;\n  2. Store::reveal_direct, which takes the agent lock and drops it;\n  3. Store::host, which takes it again and hosts a new room.\n\nBetween 2 and 3 the lock is free, so a Store::sync can run. If that sync\njoins a one-to-one room with the same user from a Welcome -- the other\nside opening the same DM at the same moment -- then host goes on and\nmakes a second one. room-policy-04 section 5: \"Only a single\nfixed-membership room can exist for any unique set of participants\", so\nthe hub refuses it, host leaves the room again and the user's first\nPRIVMSG fails with a room already there.\n\nIt is also a second lock wait on the measured path. Bead mimid-604m.2\ntimed 1.09 s idle and 21.2 s under I/O pressure from the PRIVMSG to the\nstore_send span, of which store_host_room accounted for 429.7 ms; the\nrest is the two acquisitions and the records read.\n\n## The shape of the fix\n\nHave Store::host take a \u0026mut Agent rather than lock, and let its three\ncallers (create_room, start_call_with, open_direct) lock and pass it.\nopen_direct then reveals and hosts under one lock, which closes the\nwindow and drops one acquisition. The critical section grows by\nreveal_direct's reads, which are reads of state already in memory.\n\nLeft alone by bead mimid-604m.6, whose scope was the 28 write\ntransactions inside Agent::host_room.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T02:09:33.992538154Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T02:09:33.992538154Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.8",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-28T02:09:34.404871211Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

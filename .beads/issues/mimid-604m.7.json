@@ -1,0 +1,25 @@
+{
+  "id": "mimid-604m.7",
+  "title": "Agent::in_transaction commits twice for every transaction",
+  "description": "Agent::in_transaction opens with self.save() before BEGIN IMMEDIATE:\n\n    // What was delivered before is saved on its own first.\n    self.save()?;\n\ncrate::state::save UPDATEs the agent_state row unconditionally, so that\npre-save always dirties a page and, with nothing else holding a\ntransaction, is a committed write transaction of its own. Every\nin_transaction call therefore costs two commits, not one, and\nin_transaction is how the agent builds every Commit, handles every\nserver Message and ends every outbox entry.\n\nMeasured on the first-private-message path, after bead mimid-604m.6\nbatched Agent::host_room: host_room commits 4 times, of which 2 are the\none transaction and its pre-save, 1 is the save after Room/create and 1\nis publishing this device's first KeyPackage.\n\n## Why it is not just removable\n\nThe pre-save is what makes a rollback safe to be coarse. Agent::roll_back\nreads the state back from the database and reloads the groups, discarding\nwhatever the in-memory state held; the pre-save is what puts the\nalready-delivered journal entries, and any state change made before the\ncall, where the rollback can find them. Skipping it when\nself.undelivered is empty would still drop in-memory state changes made\nbefore the call, and the set of callers that have one is not obvious from\nthe call sites.\n\nSo this is a durability question about what a rollback is allowed to\nlose, not a refactor: for Mark. If the answer is that in_transaction may\nkeep the pre-save only when there is something to save, every agent write\ncosts one commit instead of two.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T02:08:28.286639076Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T02:08:28.286639076Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.7",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-28T02:08:28.324596796Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
