@@ -1198,6 +1198,12 @@ Added on 2026-11-20:
    rule in §3 step 4: an item naming a user or room the store does not
    have is kept with that field marked unknown, not refused.
 
+8. **A Chat that is gone.** The same rule as §7.7, which covers a
+   ChatContact and a Chat alike. The item stays so that the numbers
+   below match the `§7.N` citing them: §3 steps 3, 4 and 5 cite §7.8,
+   and an ordered list renumbers from its first item, so a gap here
+   moves every number after it.
+
 9. **Deleting a chat deletes its local data (Mark, 2026-11-20).** When a
    front end deletes a chat, the store deletes everything it keeps of
    the room, not only the room record: its messages, bans and read
