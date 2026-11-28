@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.152",
+  "title": "ADMIN says a nick is on no server of mimid's; WHOIS says it is on this one",
+  "description": "Found by the spec review of branch irc-verbs.\n\nSession::admin (crates/mimid-agent-irc/src/command.rs) answers 402\nERR_NOSUCHSERVER for any target that is not `*`, the configured server\nname, the asking user's own nick or SERVICE_NICK. Its doc comment gives\nthe reason: \"every other nick this front end knows belongs to someone at\na provider, who is connected to no server of mimid's\".\n\nSession::whois in the same file says the opposite, sending\n312 \u003cnick\u003e \u003cthis server\u003e :mimid-agent for every user nick it knows.\n\nModern §\"ADMIN message\": \"If \u003ctarget\u003e is a client, the information for\nthe server that client is connected to is requested\", and reserves\nERR_NOSUCHSERVER for when \"a matching server cannot be found\" -- which,\nby mimid's own 312, it can. So WHOIS bob-b and ADMIN bob-b give a client\ntwo incompatible answers about where bob-b is.\n\nTwo ways out:\n- Accept any nick this run has given (Names::user_of returning Some) as\n  naming this server, which is exactly the set WHOIS answers 312 for,\n  and keep 402 for a name that is neither this server nor a nick here.\n- Or keep the behaviour and fix the stated reason: say ADMIN matches no\n  client target at all, and add that to the crate's # Limitations beside\n  the wildcard entry, so the two numerics' disagreement is on the record\n  rather than contradicted by a comment.\n\nDecision mimid-1wgh.142 carries ADMIN's readings and should gain\nwhichever is chosen. The crate's # Limitations records only the wildcard\ndeviation today.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T15:56:27.298285063Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T15:56:27.298285063Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.152",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T15:56:28.602897017Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.150",
+  "title": "Decision: the account of a nick that cannot be written on the wire",
+  "description": "extended-join and account-tag carry the account of a nick, which in mimid is\nthe user's MIMI URI (docs/design/agent-frontends.md §7.15, the same string\n311 RPL_WHOISUSER and 330 RPL_WHOISACCOUNT already send). A URI reaches the\nfront end from a peer's MLS credential and from the client's own line, and\nnothing between the credential and the wire bounds it or keeps the characters\nIRC cannot write out of it: `parse_user_uri` (crates/mimid-agent-irc/src/names.rs)\nrejects only an empty domain, an empty local part and a `/` in the local part,\nand `Names::identity` copies whatever it is given into `Identity.uri`, so a\nURI holding a space, CR, LF or NUL, one starting with `:`, one that is not a\nuser URI at all, or one long enough to carry the JOIN line past 512 octets is\nreachable.\n\n~/PROJECT/IETF/specs/ircv3-extended-join.md, \"Description\", defines two forms\nof the JOIN message and no third:\n\n    :nick!user@host JOIN #channelname accountname :Real Name\n    :nick!user@host JOIN #channelname * :Real Name\n\nand says of the second that it \"represents that the user has not logged in to\nan account prior to channel ingress\", with \"an asterisk is not a valid account\nname\". ~/PROJECT/IETF/specs/ircv3-account-tag.md says the tag \"MUST be named\n`account`, and contain the sender's current services username. (If the user is\nnot identified to any services account, the tag MUST NOT be sent.)\" Neither\ngives a value for an account that exists but cannot be written.\n\nREADING A (chosen): write `*` as the account and as the realname, and send no\n`account` tag. The two specs define exactly one other legal value each, and\nboth say the same thing to a client: this nick's account is not known to you.\nA client parsing either form gets the parameter count and the tag grammar it\nwas promised.\n\nREADING B: leave the account and realname parameters off that one JOIN line\nand send the plain three-token form instead. A client that negotiated\nextended-join reads params[1] as the account (goguma 5aa7baa5\nlib/client.dart), so the line would be parsed as a JOIN of three channels or\nrejected, which is worse than a nick whose account is unknown.\n\nREADING C: write the URI with the offending characters replaced, as\n`host_part` and `nick_part` already do for a hostmask. Rejected: an account is\ncompared for equality by the client against the account in 330 and in\nWHOIS, and a substituted string would name a user who does not exist, which\nis the one thing a credential-derived identifier must not do.\n\nWhere it is: `account_of` and `account_param` in\ncrates/mimid-agent-irc/src/names.rs, with MAX_ACCOUNT as the length limit,\nboth carrying a pointer here. The wider invariant — that an `Identity` minted\nfrom a URI can always be written on the wire, which 311, 330, 352 and the\nhostmask need as much as these two capabilities do — is bead mimid-1wgh.140.11.",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T08:54:48.886994469Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T09:16:59.475825438Z",
+  "closed_at": "2026-11-28T09:16:59.475825438Z",
+  "close_reason": "Settled from ircv3-extended-join.md and ircv3-account-tag.md during bead mimid-1wgh.140.6: `*` as the account parameter and realname, and no `account` tag, for a user URI that is not a user URI, is longer than MAX_ACCOUNT or cannot be written as a middle parameter. names.rs's account_of and account_param carry the pointer, with the unit test an_account_that_cannot_be_written_has_none; the wider invariant is bead mimid-1wgh.140.11.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.150",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T08:54:48.934049051Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

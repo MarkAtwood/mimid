@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.151",
+  "title": "Person::clients counts a client once per shared room",
+  "description": "Found by the review of branch irc-verbs, not by the bead that added the\nfield (mimid-1wgh.140.5).\n\nsync::refresh_clients (crates/mimid-agent-store/src/sync.rs) walks every\nroom and every client in it, incrementing per (room, client):\n\n  for room in agent.rooms() { for client in agent.clients(\u0026room.uri) {\n      *counted.entry(user).or_default() += 1 } }\n\nThere is no per-user deduplication of clients across rooms, so one\ndevice in five shared rooms is stored as clients: Some(5), and two\ndevices in three rooms as Some(6).\n\nPerson::clients (crates/mimid-agent-store/src/record.rs) says \"How many\nof this user's clients are leaves of the MLS group of a room this user\nshares with them\". That is a public, serialized record field any front\nend may read, so the contract is wrong, not just a helper.\n\nNo reply is wrong today: monitor::Session::verdict only tests count \u003e 0,\nand MONITOR is the only reader. That is why this is P3 and not P2 -- but\nthe next reader of the field inherits a number that means nothing.\n\nTwo ways out, and the choice is the point of the bead:\n- Count each client once: collect per-room client URIs into a\n  BTreeMap\u003cString, BTreeSet\u003cString\u003e\u003e of user to client id and store the\n  set's length. Then the field means what it says.\n- Or redefine it as leaves across shared groups, counting a client once\n  per shared room, and say so at the field, in the crate docs and in\n  agent-frontends.md §7.39.\n\nEither way the test belongs with it: a contact sharing two rooms with\none device, asserting the number the chosen reading gives. The existing\ntest (mimid-agent-store tests/groundwork.rs\na_person_record_counts_the_clients_in_a_shared_group) uses one room, so\nit cannot tell the two readings apart.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T15:56:06.918053816Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T15:56:06.918053816Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.151",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T15:56:08.825487535Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

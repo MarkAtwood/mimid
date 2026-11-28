@@ -1,0 +1,22 @@
+{
+  "id": "mimid-1wgh.153",
+  "title": "REHASH reads the configuration file on a tokio worker, and nothing paces the verb",
+  "description": "Found by the review of branch irc-verbs, not by the bead that added the\nverb (mimid-1wgh.140.4).\n\nReloader::reload (crates/mimid-agent/src/reload.rs) does synchronous\nfilesystem work inside its async body: Config::load -\u003e read_config -\u003e\nstd::fs::File::open and read_to_string of up to MAX_CONFIG_BYTES\n(256 KiB), with no spawn_blocking.\n\nA registered IRC connection can drive it as fast as it likes with REHASH\nin a loop, blocking a tokio worker on each pass. On a slow or networked\nfilesystem one open can stall every other IRC and JMAP connection on\nthat worker. Refusal::AgentConfigReloadRefused rate limits the log line,\nnot the work.\n\nThe size is bounded by a named constant, as AGENTS.md asks; it is the\nruntime that is not protected.\n\nFix: wrap the read in tokio::task::spawn_blocking (the path is already\nowned, so a clone and Config::load inside the closure is enough), or\nread with tokio::fs and hand the text to Config::parse. If pacing\nmatters as well, a minimum interval held beside `running` behind the\nsame mutex answers a too-soon REHASH with the NOTICE instead of a read.\n\nThe test is a REHASH loop that must not keep another connection's PING\nfrom being answered.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T15:56:29.959787595Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T15:56:29.959787595Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.153",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T15:56:31.285817616Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

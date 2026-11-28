@@ -1,0 +1,23 @@
+{
+  "id": "mimid-1wgh.140.11",
+  "title": "An Identity minted from a user URI must be writable on the wire",
+  "description": "Nothing between an MLS credential and the IRC wire keeps a user URI writable.\n`parse_user_uri` (crates/mimid-agent-irc/src/names.rs) rejects an empty\ndomain, an empty local part and a `/` in the local part, and nothing else;\n`user_uri_domain` (crates/mimid-agent-core/src/uri.rs) rejects `/`, `?` and\n`#`; neither checks the domain for a space or a control character, and neither\nbounds the length. `Names::identity` copies the string it is given into\n`Identity.uri`, and `base_identity` falls back to `(\"unknown.invalid\",\n\"user\")` for anything that is not `mimi://\u003cdomain\u003e/u/\u003clocal\u003e` without\nrejecting it.\n\nThe URI is then written raw in three places, each of which a peer can\ntherefore split or lengthen past 512 octets:\n\n- 330 RPL_WHOISACCOUNT, where it is a middle parameter\n  (crates/mimid-agent-irc/src/command.rs, the `whois` numerics);\n- 311 RPL_WHOISUSER's `\u003crealname\u003e`;\n- 352 RPL_WHOREPLY's `0 \u003curi\u003e`.\n\nBead mimid-1wgh.140.6 guarded the two lines it added — extended-join's\naccount and realname parameters and the `account` tag — with `account_of`,\n`account_param` and `MAX_ACCOUNT` in names.rs (decision mimid-1wgh.150). That\nis a guard at the point of writing, repeated per site. The invariant belongs\nwhere an `Identity` is minted, so that `Identity.uri` is writable by\nconstruction and all of these sites are covered at once, with a named length\nlimit and a test at and past it.\n\nTwo things found while reading, which belong here:\n\n- NICK takes any non-empty parameter (crates/mimid-agent-irc/src/register.rs,\n  `fn nick`), so `NICK :foo bar` makes the burst's NICK line's source\n  `foo bar!user@host` and splits that line.\n- `Identity` has no constructor that can fail, so nothing in the type says\n  where the check happened.\n",
+  "notes": "2026-11-28, from the parameter-grammar fix on branch irc-verbs (design\nnote agent-frontends.md §7.41):\n\nClosed here, so this bead is narrower than it reads above.\n- No parameter reaches the wire holding CR, LF or NUL, and no parameter\n  that is not the last one reaches it empty, holding a space or\n  beginning with `:`. Out::to_wire writes a space for each of the three\n  in a last parameter and `*` for a middle one that could not be one, so\n  330's middle parameter can no longer split a line or shift the\n  parameters after it, whatever a peer puts in the URI.\n- 401, 402, 406, the 369 after a 406, 421 and FAIL MONITOR bound the\n  name they echo to line::MAX_ECHO (= names::MAX_ACCOUNT) and answer `*`\n  past it.\n\nStill open, and now the whole of this bead.\n- Length. The URI is written at its own length in 311's and 314's\n  \u003crealname\u003e, 312, 330, 352 and every hostmask, so one past MAX_ACCOUNT\n  carries that reply past 512 octets. Those sites use Session::numeric,\n  which does not cut. This is the invariant-at-minting half: an Identity\n  whose uri is writable by construction covers all of them at once.\n- The source, which to_wire writes raw and which no guard covers.\n  Verified today: register.rs's NICK arm is\n  `line.param(0).filter(|n| !n.is_empty())` with no is_nick check, and\n  that string becomes the source of the burst NICK line\n  (register.rs:478-486, sent when the asked nick differs from the one\n  given). So `NICK :foo bar` makes the source `foo bar!user@host` and\n  the client reads `bar!user@host` as the command; `NICK :a\u003cCR\u003eb` puts a\n  CR mid-line. Reachable only by the connection's own client, and only\n  after it has shown a credential, since the burst is registration's.\n  to_wire cannot fix this one: a prefix holding a space or a CR has no\n  safe substitute at that layer, because every octet of it is the\n  identity. The fix is is_nick at the NICK arm.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T08:55:05.65258433Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T15:55:24.220476848Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.140.11",
+      "depends_on_id": "mimid-1wgh.140",
+      "type": "parent-child",
+      "created_at": "2026-11-28T08:55:05.70892822Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
