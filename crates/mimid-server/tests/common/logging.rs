@@ -90,7 +90,7 @@ impl JsonCapture {
         undecided_global();
         let buffer = Arc::new(Mutex::new(Vec::new()));
         let writer = Arc::clone(&buffer);
-        let subscriber = mimid_server::logging::json_subscriber(
+        let subscriber = mimid_telemetry::logging::json_subscriber(
             tracing_subscriber::EnvFilter::new("mimid_server=trace"),
             move || Writer(Arc::clone(&writer)),
         );

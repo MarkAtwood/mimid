@@ -1145,7 +1145,7 @@ impl PeerClient {
 /// mimid-ndov). `status` is the HTTP status, or `error` when no response
 /// arrived. `peer` is a configured peer, so the label set is bounded.
 fn record_peer_call(peer: &Domain, endpoint: &'static str, status: &str, started: Instant) {
-    let metrics = crate::telemetry::metrics();
+    let metrics = crate::metrics::instruments();
     let peer = opentelemetry::KeyValue::new("peer", peer.as_str().to_owned());
     let endpoint = opentelemetry::KeyValue::new("endpoint", endpoint);
     metrics.peer_calls.add(

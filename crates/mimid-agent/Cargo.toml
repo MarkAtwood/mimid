@@ -34,6 +34,10 @@ mimid-agent-irc = { path = "../mimid-agent-irc" }
 mimid-agent-jmap = { path = "../mimid-agent-jmap" }
 # The plaintext store the daemon builds first and its front ends share.
 mimid-agent-store = { path = "../mimid-agent-store" }
+# The log format and the OpenTelemetry export, shared with mimid-server
+# (bead mimid-c90r): before it, the agent named its events for a reader
+# that could not show a name.
+mimid-telemetry = { path = "../mimid-telemetry", features = ["export"] }
 # `[tls] source = "acme"` (docs/design/frontend-auth.md §5.2 rank 2; bead
 # mimid-e13m.8): the ACME client. It takes any challenge type, so DNS-01
 # is mimid's code. aws-lc-rs for the one crypto backend (decision

@@ -1,7 +1,8 @@
-//! The `tracing` subscriber that `mimid` installs, and its JSON output
-//! (bead mimid-bfzm).
+//! The `tracing` subscriber either binary installs, and its JSON output
+//! (beads mimid-bfzm, mimid-c90r).
 //!
-//! `RUST_LOG` filters events and spans; `mimid` defaults it to `info`.
+//! `RUST_LOG` filters events and spans; both binaries default it to
+//! `info`.
 //! [`LOG_FORMAT_VAR`] (`MIMID_LOG_FORMAT`) selects the output on standard
 //! output:
 //!
@@ -22,12 +23,13 @@
 //! ```
 //!
 //! `event` is the event's stable name. Every INFO, WARN and ERROR event of
-//! this crate has one (`name: "..."` at the call site, lower snake case).
-//! A DEBUG or TRACE event has none, with one exception: a sweep that found
-//! nothing to do carries the name of the INFO event it would otherwise
-//! have been (`blob_sweep`, `message_sweep`, `client_idle_sweep`), so that
-//! one query over the name shows every sweep and not only the sweeps that
-//! deleted something. An error field holds the error's message, and
+//! either binary has one (`name: "..."` at the call site, lower snake
+//! case). A DEBUG or TRACE event has none, with one exception: one of
+//! mimid-server's sweeps that found nothing to do carries the name of the
+//! INFO event it would otherwise have been (`blob_sweep`,
+//! `message_sweep`, `client_idle_sweep`), so that one query over the name
+//! shows every sweep and not only the sweeps that deleted something. An
+//! error field holds the error's message, and
 //! `<field>.sources` the messages of its source chain, as the text format
 //! shows them.
 //!
@@ -247,9 +249,10 @@ impl Visit for FieldMap {
     }
 }
 
-/// A JSON capture of events for this crate's unit tests.
-#[cfg(test)]
-pub(crate) mod testing {
+/// A JSON capture of events, for the unit tests of this crate and, with
+/// the `testing` feature, of a crate that depends on it.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
     use std::io::Write;
     use std::sync::{Arc, Mutex, Once};
 
@@ -314,7 +317,7 @@ pub(crate) mod testing {
     /// The JSON lines of every event `emit` produces on this thread, at
     /// every level, with each line's timestamp removed after checking
     /// that it is a string.
-    pub(crate) fn lines(emit: impl FnOnce()) -> Vec<Value> {
+    pub fn lines(emit: impl FnOnce()) -> Vec<Value> {
         static GLOBAL: Once = Once::new();
         GLOBAL.call_once(|| {
             tracing::subscriber::set_global_default(Undecided)
@@ -375,7 +378,7 @@ mod tests {
             got,
             [json!({
                 "level": "ERROR",
-                "target": "mimid_server::logging::tests",
+                "target": "mimid_telemetry::logging::tests",
                 "event": "sample_failed",
                 "message": "sample failed",
                 "fields": {
@@ -401,7 +404,7 @@ mod tests {
             got,
             [json!({
                 "level": "DEBUG",
-                "target": "mimid_server::logging::tests",
+                "target": "mimid_telemetry::logging::tests",
                 "message": "counted",
                 "fields": {"count": 3},
             })]

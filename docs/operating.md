@@ -250,6 +250,8 @@ OpenTelemetry export over OTLP/HTTP with protobuf bodies. Off when the table is 
 
 No trace context is sent to or accepted from peers. If telemetry cannot be flushed at shutdown, `mimid` logs `telemetry_flush_failed`.
 
+`mimid-agent` takes the same table; see [the agent's guide](agent.md#telemetry).
+
 **Which spans you get depends on the span filter:** `span_level` when it is set, and otherwise `RUST_LOG`. With neither set the filter is `info`, and the spans at INFO are:
 
 | Span | Opened for | Fields |

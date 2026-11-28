@@ -616,7 +616,7 @@ fn refuse_because(
     description: String,
     restore: bool,
 ) -> Result<Outcome, HubError> {
-    crate::telemetry::metrics()
+    crate::metrics::instruments()
         .update_refusals
         .add(1, &[opentelemetry::KeyValue::new("reason", reason)]);
     tracing::debug!(room_id, reason, "update refused");

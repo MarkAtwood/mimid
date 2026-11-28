@@ -2681,6 +2681,7 @@ dependencies = [
  "mimid-agent-jmap",
  "mimid-agent-store",
  "mimid-server",
+ "mimid-telemetry",
  "p256",
  "qrcode",
  "rcgen",
@@ -2718,6 +2719,7 @@ dependencies = [
  "mimi-room-policy",
  "mimid-live",
  "mimid-server",
+ "mimid-telemetry",
  "reqwest 0.13.5",
  "rusqlite",
  "serde",
@@ -2769,6 +2771,7 @@ dependencies = [
  "mimid-agent-core",
  "mimid-agent-store",
  "mimid-server",
+ "mimid-telemetry",
  "mls-rs",
  "mls-rs-core",
  "mls-rs-crypto-rustcrypto",
@@ -2801,6 +2804,7 @@ dependencies = [
  "mimi-content",
  "mimid-agent-core",
  "mimid-server",
+ "mimid-telemetry",
  "p256",
  "rusqlite",
  "serde",
@@ -2848,14 +2852,13 @@ dependencies = [
  "mimi-protocol",
  "mimi-room-policy",
  "mimid-live",
+ "mimid-telemetry",
  "mls-rs",
  "mls-rs-crypto-rustcrypto",
  "openmls",
  "openmls_basic_credential",
  "openmls_rust_crypto",
  "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
  "opentelemetry_sdk",
  "pkix-identity",
  "pkix-path",
@@ -2876,12 +2879,28 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "tracing-opentelemetry",
  "tracing-subscriber",
  "ulid 3.0.0",
  "unicode-normalization",
  "x509-cert",
  "zeroize",
+]
+
+[[package]]
+name = "mimid-telemetry"
+version = "0.1.0"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "toml",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -38,6 +38,9 @@
 //! cert = "/etc/ssl/chat/fullchain.pem"
 //! key = "/etc/ssl/chat/key.pem"
 //!
+//! [telemetry]                             # optional; nothing is exported without it
+//! endpoint = "http://127.0.0.1:4318"      # the collector's OTLP/HTTP base URL
+//!
 //! [did_webvh]                             # optional; see below
 //! support = true                          # the default
 //! credential_type = 0x0008                # the default
@@ -60,6 +63,13 @@
 //! private-use 0xf013 (decisions mimid-1wgh.4.81.33, mimid-1wgh.4.81.35),
 //! until IANA assigns them. The extension form's `heads_extension_type` is
 //! gone and is refused as an unknown field.
+//!
+//! `[telemetry]` names an OpenTelemetry collector for this agent's spans,
+//! log records and metrics, with the keys and defaults docs/operating.md
+//! documents for the server (`mimid_telemetry::TelemetryConfig`). Without
+//! the table nothing is exported. `service.instance.id` is `user_uri`, so
+//! a collector holding several agents can tell them apart; a user who
+//! does not want their URI in a collector leaves the table out.
 //!
 //! `full_tree_hubs` lists the provider domains of hubs whose rooms get the
 //! full ratchet tree with every Commit, for a hub that does not rebuild the
@@ -283,6 +293,13 @@ pub struct Config {
     /// off by default.
     #[serde(default)]
     pub tailnet: crate::tailnet::TailnetSetting,
+    /// Where to export spans, log records and metrics
+    /// (`mimid_telemetry::TelemetryConfig`, the same table mimid-server
+    /// takes); `None`, the default, exports nothing. The agent runs on
+    /// the user's machine, so it is off until the user names a collector
+    /// (bead mimid-c90r).
+    #[serde(default)]
+    pub telemetry: Option<mimid_telemetry::TelemetryConfig>,
 }
 
 /// The `[jmap]` table.
@@ -775,6 +792,32 @@ mod tests {
             mimid_agent_jmap::BlobQuota::new(1000, 3)
         );
         assert!(Config::parse(&format!("{base}\nblob_quota_bytes = -1")).is_err());
+    }
+
+    /// The agent takes the server's `[telemetry]` table (bead
+    /// mimid-c90r), exports nothing without it, and reads it as
+    /// strictly as every other table.
+    #[test]
+    fn telemetry_is_off_without_the_table_and_parses_with_it() {
+        let base = config_with_listen("127.0.0.1:0");
+        assert!(Config::parse(&base).unwrap().telemetry.is_none());
+        let config = Config::parse(&format!(
+            "{base}\n[telemetry]\nendpoint = \"http://127.0.0.1:4318\"\nmetrics = false\n"
+        ))
+        .unwrap();
+        let telemetry = config.telemetry.expect("the table was given");
+        assert_eq!(telemetry.endpoint, "http://127.0.0.1:4318");
+        assert_eq!(telemetry.service_name, "mimid");
+        assert!(telemetry.traces);
+        assert!(telemetry.logs);
+        assert!(!telemetry.metrics, "metrics = false was read");
+        assert!(
+            Config::parse(&format!(
+                "{base}\n[telemetry]\nendpoint = \"http://127.0.0.1:4318\"\nspan = \"info\"\n"
+            ))
+            .is_err(),
+            "an unknown key in the table is refused"
+        );
     }
 
     #[test]

@@ -879,7 +879,7 @@ pub async fn check(
             span.record("outcome", "authenticated");
             span.record("mechanism", provider.mechanism.name());
             // No peer label: a provider with a DNS key can be anyone.
-            crate::telemetry::metrics().provider_auth.add(
+            crate::metrics::instruments().provider_auth.add(
                 1,
                 &[
                     opentelemetry::KeyValue::new("outcome", "authenticated"),
@@ -900,7 +900,7 @@ pub async fn check(
             AuthMode::Enforce => {
                 span.record("outcome", "refused");
                 span.record("reason", tracing::field::display(&refusal));
-                crate::telemetry::metrics()
+                crate::metrics::instruments()
                     .provider_auth
                     .add(1, &[opentelemetry::KeyValue::new("outcome", "refused")]);
                 tracing::debug!(
@@ -915,7 +915,7 @@ pub async fn check(
             AuthMode::Observe => {
                 span.record("outcome", "observed");
                 span.record("reason", tracing::field::display(&refusal));
-                crate::telemetry::metrics()
+                crate::metrics::instruments()
                     .provider_auth
                     .add(1, &[opentelemetry::KeyValue::new("outcome", "observed")]);
                 if auth.first_observed(&from) {

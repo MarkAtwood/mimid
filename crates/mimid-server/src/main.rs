@@ -17,11 +17,11 @@
 //! - `MIMID_LOG_FORMAT` selects the log format on standard output: `text`
 //!   (the default, also when unset or empty) or `json`, one JSON object per
 //!   line with each INFO, WARN and ERROR event's stable name. Any other
-//!   value stops `mimid` at startup. See [`mimid_server::logging`].
+//!   value stops `mimid` at startup. See [`mimid_telemetry::logging`].
 //!
 //! With `[telemetry]` in the configuration, spans, the events `RUST_LOG`
 //! keeps and mimid's metrics also go to an OpenTelemetry collector over
-//! OTLP/HTTP; see [`mimid_server::telemetry`].
+//! OTLP/HTTP; see [`mimid_telemetry`].
 //!
 //! # Limitations
 //!
@@ -81,7 +81,6 @@ use mimid_server::hub::fanout::Fanout;
 use mimid_server::hub::{Clock, Hub, SystemClock};
 use mimid_server::jmap::blobs::BlobSweeper;
 use mimid_server::jmap::{self, JmapOptions};
-use mimid_server::logging::{LogFormat, json_subscriber};
 use mimid_server::peer::PeerClient;
 use mimid_server::peer_clock::{self, PeerClocks};
 use mimid_server::provider_auth::{
@@ -89,8 +88,9 @@ use mimid_server::provider_auth::{
     check_validation,
 };
 use mimid_server::store::Store;
-use mimid_server::telemetry::Telemetry;
 use mimid_server::tls::ProxyPolicy;
+use mimid_telemetry::Telemetry;
+use mimid_telemetry::logging::{LogFormat, json_subscriber};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;

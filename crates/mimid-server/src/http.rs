@@ -167,7 +167,7 @@ pub fn router(directory: Directory, hub: Arc<Hub>, follower: Arc<Follower>) -> R
 }
 
 /// Counts each request and its duration by matched route and status
-/// (bead mimid-ndov; [`crate::telemetry::metrics`]).
+/// (bead mimid-ndov; [`crate::metrics::instruments`]).
 async fn record_metrics(request: Request, next: axum::middleware::Next) -> Response {
     let route = request
         .extensions()
@@ -176,7 +176,7 @@ async fn record_metrics(request: Request, next: axum::middleware::Next) -> Respo
         .to_owned();
     let started = std::time::Instant::now();
     let response = next.run(request).await;
-    let metrics = crate::telemetry::metrics();
+    let metrics = crate::metrics::instruments();
     let status = i64::from(response.status().as_u16());
     metrics.http_requests.add(
         1,
@@ -797,8 +797,8 @@ mod tests {
 
     use super::*;
     use crate::follower::relay::RelayError;
-    use crate::logging::testing::lines;
     use crate::peer::{PeerError, rejected_update};
+    use mimid_telemetry::logging::testing::lines;
 
     /// The captured lines at INFO or above.
     fn above_debug(lines: &[Value]) -> Vec<&Value> {

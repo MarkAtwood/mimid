@@ -116,6 +116,11 @@
 //! INFO, WARN and ERROR events have stable names (`agent_listening`, with
 //! `jmap` and `irc` saying which front ends serve, `agent_sync_failed`,
 //! ...), as in mimid-server; no token is ever logged, and no IRC line.
+//! `MIMID_LOG_FORMAT=json` writes the log as JSON lines, which is where a
+//! name can be seen, and a `[telemetry]` table sends the spans, the
+//! events `RUST_LOG` keeps and the metrics to an OpenTelemetry collector
+//! as well: both are [`mimid_telemetry`], shared with the server (bead
+//! mimid-c90r).
 //!
 //! # Limitations
 //!
@@ -215,8 +220,12 @@
 //!   the `413`.
 //! - Open EventSource streams are not counted against
 //!   `maxConcurrentRequests`.
-//! - The log is text only: mimid-server's `MIMID_LOG_FORMAT=json` output
-//!   lives in that crate, which this one does not depend on.
+//! - The agent opens no spans, so `[telemetry] traces` exports nothing
+//!   until the sync loop has one (bead mimid-604m). The log records and
+//!   the metrics do not depend on a span.
+//! - Exported telemetry carries `service.instance.id` = `user_uri`, so
+//!   the collector learns which user this agent is. A user who does not
+//!   want that leaves `[telemetry]` out, which is the default.
 //! - The IRC front end has its own limits (mimid-agent-irc): channels
 //!   only, no attachments and no history (docs/design/agent-frontends.md
 //!   §7).

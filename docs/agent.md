@@ -20,7 +20,18 @@ chmod 600 server-token
 mimid-agent <config.toml>
 ```
 
-`RUST_LOG` filters the log, which goes to standard output in text form; it defaults to `info`. On start the agent opens or creates its state directory, publishes KeyPackages, binds its listeners and then serves.
+On start the agent opens or creates its state directory, publishes KeyPackages, binds its listeners and then serves.
+
+The log goes to standard output. Environment variables:
+
+| Variable | Values | Default | Meaning |
+|---|---|---|---|
+| `RUST_LOG` | a `tracing` filter, such as `info` or `mimid_agent=debug,info` | `info` | Which log events are written. |
+| `MIMID_LOG_FORMAT` | `text` or `json` | `text` (also when unset or empty) | The format of the log on standard output. `json` writes one JSON object per line, with the event's stable name in `event`, and `level`, `target`, `message`, `fields` and `spans`. Any other value stops the agent at startup. |
+
+These are the server's variables and mean the same thing. The text format does not show event names; use `json` if you need them, for example to alert on `agent_sync_failed` or `agent_certificate_expiring`.
+
+With a `[telemetry]` table the spans, the log events that `RUST_LOG` keeps and the metrics also go to an OpenTelemetry collector (see [`[telemetry]`](#telemetry)).
 
 SIGINT and SIGTERM both stop it. The stop ends the sync loop, the HTTP server, every EventSource stream and every IRC connection. Unix only.
 
@@ -241,6 +252,24 @@ A device that does not trust the authority yet cannot open that page over TLS, w
 Per-device steps are on the page: on iOS, install the profile and then turn it on in Certificate Trust Settings (it is not trusted until that second step); on Android, install the `.crt` and accept the warning, though Goguma and Conversations do not need it; on a computer, add the `.crt` to the system store or point the client at it.
 
 There is no revocation: a certificate expires rather than being revoked.
+
+### `[telemetry]`
+
+OpenTelemetry export over OTLP/HTTP, with the same keys and defaults as the server's `[telemetry]` table (see [operating.md](operating.md#telemetry)). Off when the table is absent, which is the default: the agent runs on the user's machine and exports nothing until the user names a collector.
+
+```toml
+[telemetry]
+endpoint = "http://127.0.0.1:4318"
+```
+
+Two differences from the server:
+
+- `service.instance.id` is `user_uri`, so a collector that holds several agents, or an agent and its provider, can tell them apart. It also tells the collector which user this agent is; leave the table out if you do not want that.
+- The agent opens no spans yet, so `traces` has nothing to export. The log records and the metrics do not need one.
+
+`service_name` defaults to `mimid` in both binaries. Set it to `mimid-agent` if one collector takes the agent's export and a server's, so the two are not one service.
+
+If telemetry cannot be flushed at shutdown, the agent logs `agent_telemetry_flush_failed`.
 
 ### `[did_webvh]`
 

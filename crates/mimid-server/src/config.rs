@@ -58,7 +58,7 @@
 //! [wire_profiles]
 //! "b.example" = "extensions190"   # default: "draft07"
 //!
-//! # Optional: OpenTelemetry export over OTLP/HTTP (crate::telemetry).
+//! # Optional: OpenTelemetry export over OTLP/HTTP (mimid_telemetry).
 //! [telemetry]
 //! endpoint = "http://127.0.0.1:4318"  # /v1/traces, /v1/logs, /v1/metrics
 //! service_name = "mimid"              # the default
@@ -203,7 +203,7 @@ pub struct Config {
     #[serde(default)]
     pub wire_profiles: BTreeMap<Domain, WireProfileSetting>,
     /// OpenTelemetry export (bead mimid-ndov); off when absent.
-    pub telemetry: Option<crate::telemetry::TelemetryConfig>,
+    pub telemetry: Option<mimid_telemetry::TelemetryConfig>,
     /// The `did_webvh` credential type (draft-atwood-mls-didwebvh-credential-01
     /// §IANA Considerations) and the `app_data_dictionary` component that
     /// carries the `did_webvh_heads` record (decision mimid-1wgh.4.81.33),

@@ -250,7 +250,7 @@ impl<L: LocalDelivery> Fanout<L> {
                 self.store.drop_refused(id).await?;
                 let error: &(dyn Error + 'static) = &*error;
                 let rejection = RejectionFields::of(error);
-                crate::telemetry::metrics().fanout_dropped.add(
+                crate::metrics::instruments().fanout_dropped.add(
                     1,
                     &[
                         opentelemetry::KeyValue::new("peer", domain.as_str().to_owned()),

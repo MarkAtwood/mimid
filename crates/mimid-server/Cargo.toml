@@ -56,15 +56,12 @@ pkix-path = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "1a02f504d
 pkix-identity = { git = "https://github.com/MarkAtwood/crate-pkix", rev = "1a02f504db1640c916f670081be64c5eddf3ce9d", features = ["std"] }
 x509-cert = { version = "=0.2.5", default-features = false, features = ["std"] }
 der = { version = "=0.7.10", features = ["std"] }
-# OpenTelemetry export (bead mimid-ndov): tracing stays the API; these
-# turn its spans and events into OTel traces and logs, add metrics, and
-# export over OTLP/HTTP with the blocking reqwest client (the SDK's batch
-# processors run on their own threads), the reqwest version mimid uses.
-opentelemetry = { version = "=0.33.1", default-features = false, features = ["trace", "logs", "metrics"] }
-opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = ["trace", "logs", "metrics"] }
-opentelemetry-otlp = { version = "=0.33.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs", "metrics"] }
-opentelemetry-appender-tracing = { version = "=0.33.1", default-features = false }
-tracing-opentelemetry = { version = "=0.34.0", default-features = false }
+# The metrics API for this binary's own instruments (src/metrics.rs);
+# the SDK and the exporters are mimid-telemetry's.
+opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
+# The log format and the OpenTelemetry export, shared with mimid-agent
+# (beads mimid-bfzm, mimid-ndov, mimid-c90r).
+mimid-telemetry = { path = "../mimid-telemetry", features = ["export"] }
 # Retry-After HTTP-date parsing (RFC 9110 §10.2.3); already in the lockfile.
 httpdate = "1.0.3"
 # Reads the salt and URIs of reported messages (protocol-07 §5.9).
@@ -88,8 +85,7 @@ tokio.workspace = true
 tokio-stream.workspace = true
 toml.workspace = true
 tracing.workspace = true
-# json: the MIMID_LOG_FORMAT=json output (bead mimid-bfzm).
-tracing-subscriber = { workspace = true, features = ["json"] }
+tracing-subscriber.workspace = true
 # Per-request spans on the axum router (bead mimid-bfzm); already in the
 # lockfile through reqwest.
 tower-http = { version = "=0.6.11", features = ["trace"] }
@@ -100,7 +96,10 @@ zeroize = "1.9.1"
 ulid = "=3.0.0"
 
 [dev-dependencies]
-opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = ["trace", "logs", "metrics", "testing"] }
+# The in-memory metric exporter the metrics test reads back through.
+opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = ["metrics", "testing"] }
+# `logging::testing`, the JSON capture the unit tests assert on.
+mimid-telemetry = { path = "../mimid-telemetry", features = ["testing"] }
 unicode-normalization.workspace = true
 # Independent oracle, at the pin mimi-mls uses (decisions mimid-1wgh.4.13, .6.16).
 mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "d9af9507223e4c915db9599f6038da1de5d68d4b" }
