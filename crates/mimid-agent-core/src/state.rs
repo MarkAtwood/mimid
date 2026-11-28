@@ -591,6 +591,26 @@ pub(crate) fn read(connection: &Connection, user_uri: &str) -> Result<State, Str
     Ok(state)
 }
 
+/// Whether the `agent_state` row already holds what [`save`] would
+/// write for `state`: the same serialisation, compared as the text the
+/// row holds, so a difference is a difference of state and never of
+/// formatting. A row that cannot be read, or is not there, answers
+/// `false` and the caller writes.
+pub(crate) fn is_saved(connection: &Connection, state: &State) -> bool {
+    let Ok(record) = record_of(state) else {
+        return false;
+    };
+    let stored: Option<String> = connection
+        .query_row(
+            "SELECT record FROM agent_state WHERE user = ?1",
+            params![state.user_uri],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap_or_default();
+    stored.as_deref() == Some(record.as_str())
+}
+
 /// Writes `state` and appends `undelivered` to the journal, both or
 /// neither: inside a transaction the caller has open, or in one of its
 /// own.
@@ -682,6 +702,37 @@ mod tests {
         s.invites.remove(0);
         assert_eq!(s.invites[0].number, 2);
         assert_eq!(s.push_invite("w3".into(), None, None), 3);
+    }
+
+    /// What [`is_saved`] answers has to be the state and not its
+    /// spelling: the same state is saved however often it is serialised,
+    /// and one changed field is a change (bead mimid-604m.7).
+    #[test]
+    fn a_state_counts_as_saved_only_while_it_matches_the_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = StateDir::open(&dir.path().join("s")).unwrap();
+        let (identity, mut state) = state_dir
+            .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
+            .unwrap();
+        let connection = identity.store().connection();
+        assert!(is_saved(connection, &state), "as written at first use");
+
+        state
+            .pinned_scids
+            .insert("mimi://a.example/u/alice".to_owned(), "scid".to_owned());
+        assert!(!is_saved(connection, &state), "one field changed");
+        save(connection, &state, &[]).unwrap();
+        assert!(is_saved(connection, &state), "saved again");
+
+        // Another state's row is not this one's.
+        let other = StateDir::open(&dir.path().join("o")).unwrap();
+        let (_, mine) = other
+            .load_or_create(
+                "mimi://a.example/u/carol",
+                &crate::DidWebvhConfig::default(),
+            )
+            .unwrap();
+        assert!(!is_saved(connection, &mine));
     }
 
     #[test]

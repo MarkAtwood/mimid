@@ -4196,8 +4196,17 @@ impl Agent {
         &mut self,
         step: impl FnOnce(&mut Self) -> Result<R, AgentError>,
     ) -> Result<R, AgentError> {
-        // What was delivered before is saved on its own first.
-        self.save()?;
+        // What was delivered before is saved on its own first, unless
+        // the row already holds it: `roll_back` replaces `self.state`
+        // from the `agent_state` row, so when the record equals that row
+        // and the journal is empty, the row is the in-memory state and
+        // the recovery point is unchanged (bead mimid-604m.7). Both
+        // halves, because `roll_back` clears `undelivered`: an entry
+        // durable before an attempt must not become one the attempt
+        // drops.
+        if !self.undelivered.is_empty() || !crate::state::is_saved(self.connection(), &self.state) {
+            self.save()?;
+        }
         if !self.connection().is_autocommit() {
             // Left open by a step that panicked.
             self.roll_back();
