@@ -33,10 +33,13 @@
 //! - A row holds its record as JSON, so the database is not meant to be
 //!   queried by field; the columns beside it are for reading the file by
 //!   hand.
-//! - Deleted rows are overwritten in the file (`PRAGMA secure_delete`), but
-//!   SQLite's rollback journal, deleted after each commit, held them
-//!   while it lasted; what the file system keeps of a deleted file is out
-//!   of reach here.
+//! - Deleted rows are overwritten (`PRAGMA secure_delete`), but the
+//!   database runs in a write-ahead log (decision mimid-1wgh.134): the
+//!   zeroed page goes to `mimid.sqlite-wal`, and `mimid.sqlite` keeps the
+//!   page that carried the old text until a checkpoint copies the frame
+//!   back, so the overwrite is prompt in the log and eventual in the
+//!   database file. Nothing checkpoints on the delete path. What the file
+//!   system keeps of a deleted file is out of reach here.
 //! - Two connections write the file, the agent's and the store's; one
 //!   waits for the other's transaction up to [`BUSY_TIMEOUT`], then the
 //!   save fails and the next one writes what it would have.
@@ -255,7 +258,7 @@ impl Database {
     /// [`FileError::Malformed`] for a schema this version does not know.
     pub fn open(path: &Path) -> Result<Self, FileError> {
         // Created 0600 first, so SQLite never makes it with wider
-        // permissions; its journal takes the file's.
+        // permissions; its `-wal` and `-shm` files take the file's.
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -273,11 +276,23 @@ impl Database {
         };
         let mut connection = Connection::open(path).map_err(database)?;
         // A deleted record's text is overwritten, not left in a free page
-        // of the file (a deleted chat, §7.9).
+        // (a deleted chat, §7.9). With a log the zeroed page reaches
+        // `mimid.sqlite` at the next checkpoint, not at the commit.
         connection
             .pragma_update(None, "secure_delete", true)
             .map_err(database)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(database)?;
+        // A write-ahead log, so a writer among the four connections this
+        // process opens on the file stops excluding every reader and a
+        // commit fsyncs once instead of four times (decision
+        // mimid-1wgh.134, §7.37). The mode belongs to the database, not to
+        // the connection, so each of the four sets it and the file's mode
+        // does not depend on which opens first; the cost is a pragma that
+        // returns `wal` and changes nothing. After `busy_timeout`, so it
+        // waits for another connection rather than failing at once.
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(database)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database)?;

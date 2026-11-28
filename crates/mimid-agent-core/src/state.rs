@@ -519,11 +519,27 @@ impl StateDir {
 }
 
 /// Sets what every connection to the database needs: a wait for another
-/// connection's write lock ([`BUSY_TIMEOUT`]), and `secure_delete`, so the
-/// text of an acknowledged journal entry is overwritten in the file
-/// instead of staying in a free page.
+/// connection's write lock ([`BUSY_TIMEOUT`]), a write-ahead log, and
+/// `secure_delete`, so the text of an acknowledged journal entry is
+/// overwritten instead of staying in a free page.
+///
+/// `journal_mode` belongs to the database and not to the connection, so
+/// one of the four connections the agent's process opens on this file
+/// would be enough to put it in WAL. Each of the four sets it, so the
+/// file's mode does not depend on which one opens first; the cost is a
+/// pragma that returns `wal` and changes nothing. `busy_timeout` is set
+/// first, so the pragma waits for another connection rather than failing
+/// at once.
+///
+/// With a log, `secure_delete` zeroes the freed page into a log frame, and
+/// the database file keeps the page that carried the old text until a
+/// checkpoint copies the frame back. So the overwrite that a rollback
+/// journal made at the commit now lands at the next checkpoint, and the
+/// window between them is the exposure. There is no checkpoint on the
+/// delete path: decision mimid-1wgh.134 took the fsyncs and said so.
 fn configure(connection: &Connection) -> rusqlite::Result<()> {
     connection.busy_timeout(BUSY_TIMEOUT)?;
+    connection.pragma_update(None, "journal_mode", "WAL")?;
     connection.pragma_update(None, "secure_delete", true)
 }
 
@@ -690,6 +706,76 @@ mod tests {
                 .load_or_create("mimi://a.example/u/eve", &crate::DidWebvhConfig::default()),
             Err(AgentError::State { .. })
         ));
+    }
+
+    /// The MLS and state connection puts the file in a write-ahead log
+    /// (decision mimid-1wgh.134, bead mimid-604m.4), so a writer among the
+    /// agent's four connections stops excluding every reader. The mode is
+    /// read by a connection that set nothing, since it belongs to the
+    /// database and not to the connection that set it.
+    #[test]
+    fn the_database_is_in_wal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s");
+        drop(
+            StateDir::open(&path)
+                .unwrap()
+                .load_or_create("mimi://a.example/u/bob", &crate::DidWebvhConfig::default())
+                .unwrap(),
+        );
+        let connection = Connection::open(path.join(DATABASE_FILE)).unwrap();
+        let mode: String = connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+
+    /// A daemon killed mid-write leaves a log beside the database, which
+    /// the next start must recover rather than refuse: the identity comes
+    /// back, and the log and its database keep mode 0600. The image of the
+    /// killed daemon is the database and its log copied while a store
+    /// still holds them open, which is what is on disk when nothing
+    /// checkpointed.
+    #[test]
+    fn a_log_left_by_a_killed_daemon_is_recovered() {
+        let config = crate::DidWebvhConfig::default();
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("live");
+        let state_dir = StateDir::open(&live).unwrap();
+        let (identity, _) = state_dir
+            .load_or_create("mimi://a.example/u/bob", &config)
+            .unwrap();
+        let public = identity.signature_public_key().to_vec();
+
+        // Still open, and far short of the auto-checkpoint, so the log
+        // holds writes the database file does not have.
+        let log = live.join(format!("{DATABASE_FILE}-wal"));
+        assert!(log.exists(), "no log beside the database");
+        assert!(
+            std::fs::metadata(&log).unwrap().len() > 0,
+            "the log is empty"
+        );
+        let killed = dir.path().join("killed");
+        DirBuilder::new().mode(0o700).create(&killed).unwrap();
+        for file in [DATABASE_FILE, &format!("{DATABASE_FILE}-wal")] {
+            std::fs::copy(live.join(file), killed.join(file)).unwrap();
+        }
+        drop(identity);
+        drop(state_dir);
+
+        let (again, _) = StateDir::open(&killed)
+            .unwrap()
+            .load_or_create("mimi://a.example/u/bob", &config)
+            .unwrap();
+        assert_eq!(again.signature_public_key(), public);
+        drop(again);
+        for file in [DATABASE_FILE, &format!("{DATABASE_FILE}-wal")] {
+            let path = killed.join(file);
+            if path.exists() {
+                let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600, "{}", path.display());
+            }
+        }
     }
 
     /// The database is made 0600 with this crate's schema version, and a

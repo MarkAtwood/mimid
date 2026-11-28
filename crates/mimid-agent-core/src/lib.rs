@@ -60,7 +60,11 @@
 //! that stores the events ([`Agent::acknowledge_in`]). The schema version
 //! is a row of the `schema_version` table ([`SCHEMA_VERSION`]); another
 //! version is refused, and so is a directory of the layout before
-//! (`state.json`, `mls.sqlite`): nothing is converted.
+//! (`state.json`, `mls.sqlite`): nothing is converted. The database runs
+//! in a write-ahead log (decision mimid-1wgh.134), so SQLite's `-wal` and
+//! `-shm` files sit beside it, taking its mode; a copy of the state means
+//! all three, and a log left by a killed agent is recovered at the next
+//! start.
 //!
 //! # Limitations
 //!
@@ -128,6 +132,14 @@
 //! - The admin role has no minimum participant count, so if the creator
 //!   leaves, the room has no admin (decision mimid-1wgh.56 item 5; bead
 //!   mimid-f3bk).
+//! - Every connection to the database sets `PRAGMA secure_delete`, so a
+//!   deleted row's text is overwritten rather than left in a free page,
+//!   but the write-ahead log makes that eventual: the zeroed page goes to
+//!   `mimid.sqlite-wal` and `mimid.sqlite` keeps the page that carried the
+//!   old text until a checkpoint copies the frame back. Nothing
+//!   checkpoints on the delete path, so an embedder that must have a
+//!   deletion reach the disk at once runs `PRAGMA wal_checkpoint(TRUNCATE)`
+//!   itself (decision mimid-1wgh.134).
 //! - One agent at a time per state directory: [`Agent::open`] takes the
 //!   directory's lock ([`StateLock`]) and refuses with
 //!   [`AgentError::Locked`] while another holds it. Asking the holder to

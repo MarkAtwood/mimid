@@ -1262,7 +1262,14 @@ Added on 2026-11-20:
      §6 keeps an unreferenced upload for an hour), else the quota takes
      them later. A blob stored again after the deletion is kept.
    - The database sets `PRAGMA secure_delete`, so a deleted row's text is
-     overwritten in the file instead of staying in a free page.
+     overwritten rather than left in a free page. Since §7.37 the
+     database runs in a write-ahead log, which makes that overwrite
+     eventual rather than immediate: the zeroed page goes to
+     `mimid.sqlite-wal`, and `mimid.sqlite` keeps the page that carried
+     the text until a checkpoint copies the frame back. So the text is
+     gone from the database's files once the log is checkpointed and
+     reset, and until then it is on disk. Nothing checkpoints on the
+     delete path.
    - People are not the room's: a person first seen in a deleted room
      keeps their record (a ChatContact), as before.
 
@@ -2292,6 +2299,61 @@ Added on 2026-11-20:
     - Tests: mimid-agent `tests/irc_v2.rs`
       `redaction_and_the_tags_goguma_sends`,
       `private_queries_across_two_providers` (a REDACT across providers).
+
+37. **The database runs in a write-ahead log (decision mimid-1wgh.134,
+    bead mimid-604m.4).** Every connection the agent's process opens on
+    `mimid.sqlite` sets `PRAGMA journal_mode = WAL`: the MLS and state
+    connection (mimid-agent-core's `state::configure`), the store's
+    `Database`, `Credentials`, and `PushSubscriptions` with webpush on.
+    Four connections of the one process write the file, and with a
+    rollback journal a writer excluded every reader for the length of its
+    transaction, each commit fsynced the journal, the database file and
+    the directory, and a connection that lost the race waited out
+    `BUSY_TIMEOUT`, 10 seconds, and then failed. Measured on one first
+    private message (bead mimid-604m.5): 48 write transactions and 192
+    fsyncs across the two agent databases before, 49 after, with journal
+    creates and directory fsyncs going to zero, and the client's echo
+    35.8 s to 11.2 s under I/O pressure, 1.39 s to 0.65 s idle.
+
+    The mode belongs to the database and not to the connection, so one of
+    the four setting it would put the file in the log. Each of them sets
+    it, so the file's mode does not depend on which opens first; the cost
+    is a pragma that returns `wal` and changes nothing, and `busy_timeout`
+    is set before it so the pragma waits for another connection rather
+    than failing at once.
+
+    What it costs, which is the half Mark decided rather than discovered.
+    `secure_delete` zeroes a freed page, and with a log that zeroed page
+    goes to `mimid.sqlite-wal` while `mimid.sqlite` keeps the page that
+    carried the old text until a checkpoint copies the frame back. So
+    §7.9's overwrite is prompt in the log and eventual in the database
+    file, and between a delete and the next checkpoint a destroyed chat's
+    text is readable in `mimid.sqlite` itself. This is not only about
+    deletes: every overwrite is deferred the same way, so an edited
+    message's old body lives in the file for a checkpoint too. SQLite
+    checkpoints on its own schedule and when the last connection closes,
+    so a daemon stopped cleanly leaves nothing; a daemon running, or
+    killed, is what keeps the text. Nothing checkpoints on the delete
+    path: `wal_checkpoint(TRUNCATE)` there, with `journal_size_limit = 0`
+    so the file is truncated and not merely reset, would have held §7.9 as
+    strictly as the rollback journal did at one checkpoint per destroy,
+    and Mark took the fsyncs instead with the weaker guarantee stated.
+
+    Two writers still serialize, so a save that loses the race still waits
+    out `BUSY_TIMEOUT` and fails; what ends is the exclusion of readers.
+    The log adds `mimid.sqlite-wal` and `mimid.sqlite-shm` beside the
+    database, both taking its mode, and needs a file system that supports
+    shared memory. A log left by a killed daemon is recovered by the next
+    start, not refused: the old-layout check of `state::mls_store` names
+    four files and the sidecars are not among them.
+
+    Tests: mimid-agent-store `tests/journal_mode.rs` (the store's three
+    connections), mimid-agent-core `state::tests::the_database_is_in_wal`
+    (the MLS and state connection) and
+    `state::tests::a_log_left_by_a_killed_daemon_is_recovered`,
+    mimid-agent-jmap `tests/chat_delete.rs` (§7.9's property in its
+    eventual form: the text is in none of the database's files once the
+    log is checkpointed and truncated).
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

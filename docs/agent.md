@@ -349,6 +349,7 @@ Everything is under `state_dir`:
 
 - The directory is created with mode 0700. An existing directory or file that group or others can reach is refused.
 - `mimid.sqlite` (mode 0600): the user's MLS private keys, KeyPackage private keys and groups, the delivery journal, the outbox of messages being sent, the plaintext message, room and contact records, the credentials, and the Web Push subscriptions with the agent's VAPID key.
+- `mimid.sqlite-wal` and `mimid.sqlite-shm` (mode 0600, SQLite's own): the database runs in a write-ahead log, so these sit beside it. A commit is written to the log first and copied into the database at a checkpoint SQLite schedules, which is also why a deleted message's text can stay on disk for a while after it is gone from the chat: it leaves the files at that checkpoint, and at the latest when the agent stops cleanly. Copy or back up the three together, with the agent stopped. A log left behind by a killed agent is recovered at the next start.
 - `agent-token` (mode 0600): the token for local clients.
 - `blobs/`: attachments, in plaintext.
 - `lock` (mode 0600, never deleted): while the agent runs it holds an exclusive lock on this file, so a second agent on the same directory (another `mimid-agent`, or purple-mimi pointed at it) refuses to start with "the state directory is in use by another agent" instead of corrupting the MLS state. Do not delete it while the agent runs.

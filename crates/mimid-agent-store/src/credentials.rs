@@ -443,6 +443,12 @@ impl Credentials {
             .pragma_update(None, "secure_delete", true)
             .map_err(database)?;
         connection.busy_timeout(BUSY_TIMEOUT).map_err(database)?;
+        // A write-ahead log, as the other connections on this file set it
+        // (decision mimid-1wgh.134); [`crate::db::Database::open`] says
+        // why each of them sets a mode that belongs to the database.
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .map_err(database)?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(database)?;

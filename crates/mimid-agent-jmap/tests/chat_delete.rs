@@ -13,11 +13,21 @@
 //!   bob's view; alice still has her copy of its history.
 //! - §7.9: its Messages and ChatBan are destroyed with it, as changes a
 //!   client's `/changes` reports; after a restart the agent's redelivery
-//!   brings none of them back; once bob is out of the room, the database
-//!   file holds none of its text, its key or its blob id, none of the
-//!   store's tables holds its URI (the agent's own state, in the same
-//!   file, names the rooms it left), and the blob store no longer has the
-//!   attachment.
+//!   brings none of them back; once bob is out of the room, and once the
+//!   log is checkpointed, none of the database's files holds its text, its
+//!   key or its blob id, none of the store's tables holds its URI (the
+//!   agent's own state, in the same file, names the rooms it left), and
+//!   the blob store no longer has the attachment.
+//! - §7.37: the overwrite is eventual rather than immediate. With a
+//!   rollback journal `PRAGMA secure_delete` put the zeroed page in
+//!   `mimid.sqlite` at the commit, so the file was clean the moment the
+//!   destroy returned. With a write-ahead log the zeroed page goes to a
+//!   log frame and reaches the file at the next checkpoint, so this test
+//!   checkpoints and truncates the log before reading, and reads the
+//!   `-wal` and `-shm` as well as the database. The window between the
+//!   commit and that checkpoint, in which the text is still on disk, is
+//!   what this test does not cover and what decision mimid-1wgh.134
+//!   accepted.
 //! - "kept" and its Message are untouched, and the next Message to it
 //!   arrives.
 //! - Invited to the room again, bob gets a new, empty Chat for it.
@@ -28,7 +38,7 @@ mod common;
 
 use std::collections::BTreeMap;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -516,7 +526,38 @@ async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
     // The round that saw it out acknowledged; the next one saves.
     bob.chat.sync().await.unwrap();
     assert_eq!(bob.ids("Chat").await, [kept.as_str()]);
-    let file = std::fs::read(bob.chat.store().database_path()).unwrap();
+    // The database runs in a write-ahead log (§7.37), so `secure_delete`
+    // zeroes the freed page into a log frame and the database file keeps
+    // the page that carried the text until a checkpoint copies the frame
+    // back. Checkpoint and truncate the log, which is what resets it, and
+    // only then read the bytes. A busy checkpoint would have done nothing,
+    // so it must not pass for a file this test then calls clean.
+    let database = rusqlite::Connection::open(bob.chat.store().database_path()).unwrap();
+    let (busy, _, _): (i64, i64, i64) = database
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(busy, 0, "the log was not checkpointed and truncated");
+    // Every file the database has, the log and its index beside it, since
+    // a frame of the log is a place the text can be.
+    let path = bob.chat.store().database_path().to_path_buf();
+    let sidecar = |suffix: &str| {
+        let mut name = path.clone().into_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    };
+    let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::new();
+    for candidate in [path.clone(), sidecar("-wal"), sidecar("-shm")] {
+        if let Ok(bytes) = std::fs::read(&candidate) {
+            files.push((candidate, bytes));
+        }
+    }
+    let file = files
+        .iter()
+        .find(|(p, _)| *p == path)
+        .map(|(_, bytes)| bytes.clone())
+        .expect("the database file is readable");
     for gone_text in [
         "gone text",
         "bob's own text",
@@ -525,13 +566,21 @@ async fn a_destroyed_chat_takes_its_messages_bans_and_attachments() {
         blob_id.as_str(),
         ban.as_str(),
     ] {
-        assert!(!holds(&file, gone_text), "the database holds {gone_text:?}");
+        for (which, bytes) in &files {
+            assert!(
+                !holds(bytes, gone_text),
+                "{} holds {gone_text:?}",
+                which.display()
+            );
+        }
     }
+    // What was not destroyed is in the database file, where the checkpoint
+    // put it: the read above is of a file that holds the live records, not
+    // of an empty one.
     assert!(holds(&file, "kept text"));
     // The file is the agent's database too (bead mimid-1vul.10), and the
     // agent's own state names the rooms it left, as its state.json did;
     // none of the store's tables names the room.
-    let database = rusqlite::Connection::open(bob.chat.store().database_path()).unwrap();
     for table in [
         "meta",
         "rooms",
