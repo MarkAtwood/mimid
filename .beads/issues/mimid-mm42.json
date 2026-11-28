@@ -1,0 +1,22 @@
+{
+  "id": "mimid-mm42",
+  "title": "Negotiate the live stream's keepalive intervals in its hello",
+  "description": "Carry the keepalive's two intervals in the live stream's hello instead of baking one constant into both ends, per decision 6 on bead mimid-f9x4 (Mark 2026-11-27, \"live stream only, now\").\n\nWHY HERE AND NOWHERE ELSE. The live stream is mimid's own binding and both ends are mimid, so it can negotiate today without another implementation agreeing to anything. The IRC front end cannot: its keepalive is IRC's, and `DEFAULT_PING_AFTER` plus `DEFAULT_PONG_WITHIN` stay as they are. The push stream's intervals belong to the binding it rides, not to mimid.\n\nWHAT TO DO. `ClientHello` already carries the versions the client speaks and `ProviderHello` the provider's limits, so the two values belong there: the shortest probe interval the responder will answer and the longest idle it will tolerate. Replace `mimid_live::PING_AFTER` as the sole source of truth with the negotiated pair, keeping the constant as the value the provider offers by default. Both ends then probe and give up on the numbers they agreed rather than on a number each compiled in.\n\nTHE RULE FROM THE DRAFT, which this must satisfy: 2.4 times the probe interval must be less than the idle tolerance, so at least two probes fit one idle period with room for jitter and one slow answer. A hello that breaks it is refused, which is a new `Error` code on the stream.\n\nCOSTS. A version bump for the binding, since the hello changes shape; the CDDL and docs/design/binary-live-stream.md §5 change with it; and `JmapOptions::live_ping_after` becomes what the provider offers rather than what it enforces. A client that offers nothing gets the provider's default, so an old client still works.\n\nTHIS IS ALSO THE DRAFT'S EVIDENCE. Appendix A of the draft in mimid-f9x4 reports implementation experience; running the mechanism on one real carrier is what makes that appendix worth reading, and it is why this is being done before the working group answers rather than after.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:34:20.145939175Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:34:20.145939175Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-mm42",
+      "depends_on_id": "mimid-f9x4",
+      "type": "discovered-from",
+      "created_at": "2026-11-28T01:34:20.385529659Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

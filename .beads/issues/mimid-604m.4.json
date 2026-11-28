@@ -1,0 +1,25 @@
+{
+  "id": "mimid-604m.4",
+  "title": "Agent's mimid.sqlite is in DELETE journal mode: four connections, one write lock",
+  "description": "Found while surveying every SQLite connection for bead mimid-604m.3.\n\nNothing in the agent sets `journal_mode`, so `mimid.sqlite` is in\nSQLite's DELETE mode. Four connections of the one process write it: the\nMLS and state connection (`mimi_mls::Store::open` through\nmimid-agent-core `state.rs` `mls_store`), mimid-agent-store's\n`Database`, `Credentials` and `Push`. In DELETE mode a writer excludes\nevery reader for the length of its transaction, and each commit fsyncs\nthe journal, the database file and the directory. A connection that\nloses the race waits out `BUSY_TIMEOUT`, 10 seconds, then fails; the\nstore's own `# Limitations` says as much (`db.rs`: \"Two connections\nwrite the file ... then the save fails\").\n\nThat is the shape of the stall in the parent bead: the agent is silent\nfor whole seconds while another of its own connections holds the write\nlock, and under I/O pressure the fsyncs make each hold longer.\n\nWAL mode would end the exclusion: readers never block and a commit\nfsyncs once. The cost is the reason this is not already done. A deleted\nrow's old page lives in the `-wal` file until a checkpoint, so\n`secure_delete`, which bead mimid-1vul.9 put there so a deleted chat's\ntext is overwritten in the file (agent-frontends.md 7.9), no longer\noverwrites it at commit time. WAL also adds the `-wal` and `-shm` files\nbeside the database, which take the database file's mode, and needs a\nfile system that supports shared memory.\n\nFor Mark: is the secure_delete guarantee of 7.9 to be read as \"the text\nis gone when the commit returns\", which WAL breaks until the\ncheckpoint, or as \"the text is gone from the database file\", which WAL\nkeeps if the agent checkpoints and truncates the WAL (`PRAGMA\nwal_checkpoint(TRUNCATE)`) after a delete? The second reading makes WAL\nusable and costs one extra checkpoint on the delete path only.\n",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:22:23.406898995Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:22:23.406898995Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.4",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-28T01:22:24.055342283Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

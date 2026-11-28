@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.134",
+  "title": "Decision: the agent's database runs in WAL, without a checkpoint on delete",
+  "description": "Mark, 2026-11-27, asked which journal mode the agent's database should use and chose WAL with no checkpoint on the delete path, knowing what it costs.\n\nBEFORE. `mimid.sqlite` set no `journal_mode` anywhere, so it ran in SQLite's default DELETE mode with four connections of the one process writing it: the MLS and state connection, mimid-agent-store's `Database`, `Credentials`, and `PushSubscriptions` with webpush on. In DELETE mode a writer excludes every reader for the length of its transaction, each commit fsyncs the journal, the database file and the directory, and a connection that loses the race waits out the 10 s busy timeout and then fails. That is the shape bead mimid-604m records: minutes of silence on a user action under I/O pressure, worse on a loaded phone.\n\nCHOSEN. `journal_mode = WAL` on the agent's connections. Readers stop being excluded by a writer and a commit stops fsyncing three files.\n\nWHAT IT COSTS, and this is the part that was decided rather than discovered. WAL keeps a deleted row's old page in the `-wal` file until SQLite checkpoints, which it does on its own schedule. `secure_delete` overwrites the page in the database file; it does not reach back into a `-wal` frame already written. So for the window between a delete and the next checkpoint, a disappearing message's bytes can remain on disk in `-wal` where DELETE mode would already have overwritten them. That is a weaker guarantee than bead mimid-1vul.9 put there, and than agent-frontends.md §7.9 claims.\n\nNOT CHOSEN: a `wal_checkpoint(TRUNCATE)` on the delete path, which would have kept §7.9's guarantee as strict as DELETE mode's at the cost of one checkpoint per deletion. Mark took the simpler change and the weaker guarantee.\n\nWHAT MUST FOLLOW. agent-frontends.md §7.9 states the old guarantee and has to say what is true now, in the same commit as the change (AGENTS.md: answering another note's open question means editing that note). Bead mimid-1vul.9's guarantee is weakened and its bead should say so. Anything in docs/agent.md that promises bytes are gone at the moment of deletion needs the same treatment.\n",
+  "status": "closed",
+  "priority": 1,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:37:35.711547844Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:37:41.057835838Z",
+  "closed_at": "2026-11-28T01:37:41.057835838Z",
+  "close_reason": "Decided by Mark 2026-11-27: WAL, no checkpoint on delete, with the weaker secure_delete guarantee stated.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.134",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T01:37:35.817417742Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
