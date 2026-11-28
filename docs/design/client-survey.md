@@ -11,18 +11,18 @@ and in which of two shapes:
 - **Gateway.** Another network joins MIMI as a provider. Its users show
   up in MIMI rooms as users of a gateway domain, and MIMI users show up
   on its side. For any client that does not speak MLS the gateway holds
-  the MLS leaves of that network's users, so **end-to-end encryption
-  ends at the gateway**. That is stated once here and holds for every
-  gateway below unless the section says otherwise.
+  the MLS leaves of that network's users, so end-to-end encryption ends
+  at the gateway. That holds for every gateway below unless the section
+  says otherwise.
 
 The Nostr and White Noise case is covered by nostr-comparison.md and by
-marmot-bridge.md. This note does not redo it. Its relay-mode bridge is the nearest thing in
-mimid to a gateway, and §8 builds on it.
+marmot-bridge.md, and not redone here. Its relay-mode bridge is the
+nearest thing in mimid to a gateway, and §8 builds on it.
 
 Values and sizes marked *estimate* are mine. Sizes compare with what
 exists: mimid-agent-irc is about 4,200 lines of Rust, mimid-agent-jmap
-about 4,400 (nostr-comparison.md §4). Nothing here is measured by building or running a
-client, and nothing was posted anywhere.
+about 4,400 (nostr-comparison.md §4). Nothing here is measured by
+building or running a client, and nothing was posted anywhere.
 
 ## Sources
 
@@ -90,7 +90,6 @@ shapes.
 
 ## 1. What every front end shares
 
-
 ### 1.1 Embedded on the phone or a bouncer
 
 The agent's plain HTTP listener is loopback only; its plain IRC
@@ -98,7 +97,7 @@ listener takes any address (decision mimid-1wgh.92), and both front ends
 have a TLS listener (`listen_tls`). There are two ways a phone can use it.
 
 - **Embedded.** The agent runs on the phone and the chat app connects
-  to `127.0.0.1`. On **iOS this is not realistic**: a second app cannot
+  to `127.0.0.1`. On iOS this is not realistic: a second app cannot
   keep a localhost server alive in the background, so the chat app
   would see the agent only while the agent app is in front. On Android
   it works as a foreground service, with two limits from the client
@@ -150,20 +149,18 @@ APNs or FCM credentials. What the relay sees differs a lot:
 | Zulip | Zulip's push bouncer | Encrypted payloads from server 12 on | Registered servers only |
 | Mattermost | TPNS or HPNS | Message preview unless set to ids only | TPNS free, HPNS licensed |
 
-A front end whose push relay checks who the
-sender is (Zulip, Mattermost, Rocket.Chat, Tinode) needs the vendor's
-consent to register a server that is not theirs, and that is a terms of
-service question before it is a code question. And for mimid's privacy
-story the relay must never see message text: Goguma's Web Push
-is the best case, Matrix with `event_id_only` is next, Palaver with
-previews on is the worst.
+A front end whose push relay checks who the sender is (Zulip,
+Mattermost, Rocket.Chat, Tinode) needs the vendor's consent to register
+a server that is not theirs, a terms of service question before it is a
+code question. For mimid's privacy story the relay must never see
+message text: Goguma's Web Push is the best case, Matrix with
+`event_id_only` is next, Palaver with previews on is the worst.
 
 ### 1.3 What the store lacked, and where each was closed
 
 Every richer client wants things the store did not model when this note
-was written. All five are now built; the list is kept because it is why
-they were built, and because the client families named are the reason
-each took the shape it did.
+was written. All five are now built; the list stays because the client
+families named are why each took the shape it did.
 
 - **Replies on send.** Every family below has replies. Built: a
   message's `in_reply_to` through the store and both front ends.
@@ -202,7 +199,7 @@ Sources: ircv3.net/software/clients; github.com/cocodelabs;
 itunes.apple.com/lookup?id=538073623 and id=6470394620;
 play.google.com/store/apps/details?id=fr.emersion.goguma.play.
 
-**Goguma is the one mobile IRC client that matters**, and it now has an
+Goguma is the one mobile IRC client that matters, and it now has an
 iOS build from the same code (App Store id 6470394620, version 1.6).
 One front end serves both phones.
 
@@ -222,14 +219,14 @@ One front end serves both phones.
 Do not advertise `soju.im/bouncer-networks`: MIMI has one "network".
 Edits have no IRCv3 form that I found; keep the `(edited)` line.
 
-**Mapping.** As in agent-frontends.md §4. Push maps cleanly: the agent
+**Mapping.** As in agent-frontends.md §4. Push maps directly: the agent
 already knows when no IRC connection is attached.
 
 **Effort and reach.** Steps 1 to 5 are about 2,500 to 3,500 lines and
-give a real phone client on both platforms with end-to-end encrypted
-push. It is the cheapest phone story in this note by a wide margin.
-Reach is small (Goguma's 10K+ installs) but the users are exactly the
-people likely to run a personal always-on host.
+give a phone client on both platforms with end-to-end encrypted push,
+the cheapest phone story in this note. Reach is small (Goguma's 10K+
+installs); the users are the people likely to run a personal always-on
+host.
 
 **Risks.** Bouncer mode needs the non-loopback listener (question 1).
 pushgarden.emersion.fr is one person's service; it was not tested with
@@ -249,9 +246,9 @@ fidelity but need a network that trusts the gateway as a server.
 For MIMI the cheap shape is per-user connections: an IRC user `nick` on
 network N appears as `mimi://<gateway>/u/<nick>-<network>`. Reach is
 every IRC network; the cost is mostly policy (bridging rules,
-connection limits) and the plain fact that every IRC member of a MIMI
-room is unencrypted. **Low value**: IRC people who want MIMI rooms
-can use the front end.
+connection limits) and that every IRC member of a MIMI room is
+unencrypted. **Low value**: IRC people who want MIMI rooms can use the
+front end.
 
 ## 3. Matrix client-server API
 
@@ -309,7 +306,7 @@ front end will need upkeep. Beeper's closed hungryserv is the only
 
 ### Matrix as a gateway
 
-The shape that works is an **appservice beside a real homeserver**:
+The shape that works is an appservice beside a real homeserver:
 MIMI users appear as ghost users in an appservice namespace, Matrix
 users get MLS leaves held by the gateway under
 `mimi://<gateway>/u/<escaped mxid>`, and each MIMI room is a portal
@@ -347,8 +344,8 @@ it disables the account (`xmpp.m:2755-2775`).
 end there are no OMEMO keys, and Conversations, Monal and Dino default
 to OMEMO and then refuse to send until the user turns it off per chat
 or per account. Rooms advertised as semi-anonymous avoid it in MUCs but
-hide real JIDs. In practice the user turns OMEMO off once; that is a
-setup step to document, not a bug to fix.
+hide real JIDs. In practice the user turns OMEMO off once, a setup step
+to document.
 
 ### What the agent would implement
 
@@ -388,10 +385,10 @@ for push. **Third** as a front end.
 
 ### XMPP as a gateway
 
-This is where XMPP pays. The prior art is mature and all of it uses
-the same shape: a **XEP-0114 component behind an existing Prosody or
-ejabberd**, which handles s2s, certificates and dialback. Slidge (about
-22.5K lines of Python; puppets as `contact-<id>@gw`, rooms as
+This is where XMPP pays. The prior art is mature and uses one shape: a
+XEP-0114 component behind an existing Prosody or ejabberd, which
+handles s2s, certificates and dialback. Slidge (about 22.5K lines of
+Python; puppets as `contact-<id>@gw`, rooms as
 `group-<id>@gw` with per-room MAM, roster and bookmarks pushed through
 XEP-0356), biboumi (IRC channels as MUCs) and Spectrum2 (libpurple)
 all deploy this way, and matrix-bifrost does Matrix to XMPP.
@@ -591,8 +588,8 @@ bridges someone asks for.
 
 ## 10. Decisions (Mark, 2026-11-21)
 
-Epics: mimid-i0id (IRC v2),
-mimid-rvqk (Matrix), mimid-wmdj (XMPP), mimid-qqtk (store groundwork).
+Epics: mimid-i0id (IRC v2), mimid-rvqk (Matrix), mimid-wmdj (XMPP),
+mimid-qqtk (store groundwork).
 
 - **S1. A listener that is not loopback: yes.** The agent may open a TLS
   listener on an address the user names, off by default, with the same

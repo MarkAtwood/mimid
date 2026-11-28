@@ -7,9 +7,10 @@ mimid-s4oy: step 1 (bead mimid-s4oy.1, §1), step 2 (bead mimid-s4oy.2,
 (§3, decisions PQ1 to PQ12).
 
 The plugin lets Pidgin, and the other programs built on libpurple
-(BitlBee, Spectrum2), use MIMI rooms through mimid. The plugin embeds the agent's engine and is itself an MLS client of the
-user (decision P1, §3), so it holds keys and plaintext in its own
-process, as the mobile app of decision mimid-1wgh.39 does (§12.1).
+(BitlBee, Spectrum2), use MIMI rooms through mimid. It embeds the
+agent's engine and is itself an MLS client of the user (decision P1,
+§3), so it holds keys and plaintext in its own process, as the mobile
+app of decision mimid-1wgh.39 does (§12.1).
 frontend-auth.md §2.4 and §6.5 assumed JMAP Chat to the agent, which
 does not apply here (§12.2).
 
@@ -89,7 +90,7 @@ today.
 
 ### 1.1 Releases
 
-- **2.x.** The last release is **2.14.14, 2025-01-23** (Discourse
+- **2.x.** The last release is 2.14.14, 2025-01-23 (Discourse
   announcement; Windows `pidgin-2.14.14-offline.exe`). None since. I
   found no stated end-of-life policy (UNVERIFIED either way). The lead
   developer wrote in "Pidgin 3 MVP requirements" (2026-08-25) that
@@ -122,7 +123,7 @@ today.
   GLib 2.82, GTK 4.10, libadwaita 1.8, libsoup 3, json-glib, GPlugin
   0.44.x, and IMF's own birb, seagull (storage), hasl (SASL) and, for
   IRCv3, ibis 0.20. In-tree protocols: bonjour, demo, ircv3, sip (off by
-  default), soju (new in Alpha 4), xmpp, zulip. **Finch is dropped** from
+  default), soju (new in Alpha 4), xmpp, zulip. Finch is dropped from
   Pidgin 3 for now.
 
 ### 1.2 Who ships what
@@ -134,11 +135,11 @@ today.
 | Ubuntu 24.04 | 2.14.13 |
 | Ubuntu 25.04, 25.10, 26.04, 26.10 | 2.14.14 |
 | Fedora 43, 44, 45, rawhide | 2.14.14 |
-| Arch | **no longer in the official repositories** (archlinux.org finds nothing; when it moved is UNVERIFIED, about late 2025); AUR has `pidgin` 2.14.14, `libpurple-minimal` and `pidgin-hg` (Pidgin 3) |
+| Arch | no longer in the official repositories (archlinux.org finds nothing; when it moved is UNVERIFIED, about late 2025); AUR has `pidgin` 2.14.14, `libpurple-minimal` and `pidgin-hg` (Pidgin 3) |
 | Homebrew | formula `pidgin` 2.14.14, libpurple inside it, no separate formula |
 | MacPorts, FreeBSD, Gentoo, Alpine edge, openSUSE Tumbleweed | 2.14.14 |
 | Flathub | `im.pidgin.Pidgin` 2.14.14; Pidgin 3 on Flathub Beta only |
-| Windows | the pidgin.im installer, 2.14.14, **32-bit (i686) GTK2**; MSYS2 `mingw-w64-pidgin` (ucrt64, clang64, clangarm64); Chocolatey, Scoop |
+| Windows | the pidgin.im installer, 2.14.14, 32-bit (i686) GTK2; MSYS2 `mingw-w64-pidgin` (ucrt64, clang64, clangarm64); Chocolatey, Scoop |
 
 libpurple 3 is packaged only in AUR `pidgin-hg`, Flathub Beta and a
 Gentoo overlay. On 2026-06-13 several AUR Pidgin plugin packages
@@ -161,10 +162,10 @@ from our own releases.
   `chat_invite`, `chat_leave`, `chat_send(gc, id, msg, flags)`,
   `roomlist_get_list`, `send_file` and `new_xfer` (PurpleXfer).
 - A message is an HTML string with `PurpleMessageFlags` (send, receive,
-  system, no-log, delayed, images, remote-send and so on). **It has no
-  id.** So there is no edit, reaction, reply, retraction or read
-  receipt, and no way to change a line once written. Inline images go
-  through imgstore (`<img id="N">`).
+  system, no-log, delayed, images, remote-send and so on). It has no
+  id, so there is no edit, reaction, reply, retraction or read receipt,
+  and no way to change a line once written. Inline images go through
+  imgstore (`<img id="N">`).
 - Plugins write what is missing as text. purple-discord writes
   `EDIT: <text>` as a new line and `<name> reacted with "<emoji>"`
   (libdiscord.c, near lines 2826 and 3344). purple-gowhatsapp prefixes
@@ -411,8 +412,7 @@ process runs them.
   before those are published. mimid is Apache-2.0, which can be combined
   with GPL-3.0 but not with GPL-2.0-only; libpurple is GPL-2.0-or-later,
   so the plugin binary would go out under GPL-3.0 (not legal advice;
-  Mark owns the mimid side). No daemon to install, which is the one
-  thing (b) does better.
+  Mark owns the mimid side). No daemon to install.
 - **(d):** nothing to package.
 
 ### 2.7 Security, features, libpurple 3
@@ -480,13 +480,13 @@ that changes slowly; (d) moves with nothing of ours.
 
 ### 2.9 Recommendation
 
-**Not taken: Mark chose (b) (decision P1, §3).** What follows is the
-recommendation I made in step 2. It was not taken, and is kept as the
-record of what was weighed. The costs it names for (b) (keys inside
-Pidgin, a device per Pidgin, the binary size, the `unsafe` code, a
-plugin that moves with agent-core) are the costs §5 to §13 design for.
+**Not taken: Mark chose (b) (decision P1, §3).** Step 2's
+recommendation is kept as the record of what was weighed. The costs it
+names for (b) (keys inside Pidgin, a device per Pidgin, the binary
+size, the `unsafe` code, a plugin that moves with agent-core) are the
+costs §5 to §13 design for.
 
-My recommendation was **(a), in C, against libpurple 2.14, with (d)
+The recommendation was **(a), in C, against libpurple 2.14, with (d)
 documented now.**
 
 - (a) needs nothing new in the agent, keeps the agent the only MLS end,
@@ -558,9 +558,7 @@ PQ7 is the recommendation its question made.
   §8.11).
 - **PQ7. Token listing and revocation are built in mimid-server before
   purple-mimi, as a prerequisite** (bead mimid-v9co, step 3p in §13;
-  §12.5). The question had proposed a bead outside the epic with no
-  order, and one token per Pidgin in the README meanwhile; there is no
-  meanwhile now.
+  §12.5), not a bead outside the epic with no order.
 - **PQ8. CMake calling cargo directly** (§10.1), so a distro build
   needs no network.
 - **PQ9. A taken-over Pidgin 3 refuses its own automatic reconnect** and
@@ -586,9 +584,9 @@ PQ7 is the recommendation its question made.
 - ~~Whether libpurple 2 keeps passwords in plain text in
   `accounts.xml` without a keyring plugin.~~ Checked on 2026-11-22: it
   does (§12.3).
-- Every line count and binary size is an estimate. The libpurple 3
-  findings hold for 2.98.0 and may change with each monthly alpha.
-  mappings are designs; the libpurple 3 parts hold for 2.98.0.
+- Every line count and binary size is an estimate. The libpurple API
+  mappings are designs. The libpurple 3 findings hold for 2.98.0 and may
+  change with each monthly alpha.
 - *From memory*, not checked: std's file lock is `flock(2)` on Unix;
   `flock` over NFS on Linux; Pidgin 2's single-instance check and `-m`;
   Pidgin 2's reconnect delays; libpurple 2's user directory mode;
@@ -601,15 +599,15 @@ PQ7 is the recommendation its question made.
   `leave_conversation_async`; where `purple_data_dir()` points; whether
   a message can be removed from a conversation's view.
 - The mimid GitHub URL in §5.2 is a guess.
-- Every line count, size and timing marked INVENTED or *estimate* is a
-  guess. The takeover timings (1 s watch, 10 s grace, 30 s wait,
-  100 ms poll) are untested.
+- Every size and timing marked INVENTED or *estimate* is a guess. The
+  takeover timings (1 s watch, 10 s grace, 30 s wait, 100 ms poll) are
+  untested.
 
 ## 5. Architecture
 
-Sections 5 to 13 are the design of step 3 (bead mimid-s4oy.3). Values
-marked INVENTED are mine; line counts are *estimates*; statements marked
-*from memory* were not checked against a source on 2026-11-22.
+Sections 5 to 13 are the design of step 3 (bead mimid-s4oy.3); their
+statements marked *from memory* were not checked against a source on
+2026-11-22.
 
 ### 5.1 What the library embeds
 
@@ -621,7 +619,7 @@ nothing above them.
   embedded: "no UI, no HTTP server and no runtime of its own" (its
   `lib.rs`; decision mimid-1wgh.39).
 - **mimid-agent-store** is the plaintext layer every mimid front end
-  shares. It is taken whole, for these reasons:
+  shares. It is taken whole:
   - **Crash safety.** `Store::sync` is the agent's only journal
     consumer, and a sync's records commit in the same SQLite transaction
     as the agent's acknowledgement (`db.rs`, `Agent::acknowledge_in`).
@@ -649,13 +647,12 @@ What the daemon does around the store (about 200 lines of
 `crates/mimid-agent/src/daemon.rs`: `sync_loop`, `expiry_loop`,
 `top_up_key_packages`, `follow_stream`) purple-mimi needs too. Copying
 it would be one more copy that "must stay in step", as `uri.rs` already
-is. I propose moving it into mimid-agent-store as a runner that the
-daemon and purple-mimi both call (§13, step 3a).
+is. Step 3a (§13) moves it into mimid-agent-store as a runner that the
+daemon and purple-mimi both call.
 
-A thin purple-side store over agent-core alone was considered and is not
-proposed: it would save no binary size (agent-core already brings
-SQLite and OpenMLS), and it would redo the crash rules above for one
-client.
+A thin purple-side store over agent-core alone would save no binary
+size, since agent-core already brings SQLite and OpenMLS, and would
+redo the crash rules above for one client.
 
 ### 5.2 Repositories and crates
 
@@ -685,8 +682,9 @@ client.
 
 One state directory per MIMI account in a purple profile:
 
-- libpurple 2: `<purple_user_dir()>/mimi/<handle>/`, `~/.purple/mimi/alice@a.example/`
-  by default, or under the directory of `pidgin -c` / `finch -c`.
+- libpurple 2: `<purple_user_dir()>/mimi/<handle>/`,
+  `~/.purple/mimi/alice@a.example/` by default, or under the directory
+  of `pidgin -c` / `finch -c`.
 - libpurple 3: `<purple_data_dir()>/mimi/<handle>/`. Which directory
   `purple_data_dir()` names on each platform I did not check.
 - `<handle>` is the account's handle (§8.1), percent-encoded where a
@@ -733,10 +731,10 @@ already run another runtime beside it and hand events over (§1.5).
   event with `mimi_next_event`. The runtime never calls into C and never
   touches libpurple.
 
-  I chose a descriptor over `purple_timeout_add(0, ...)` from a foreign
-  thread, which purple-presage uses (`src/c/bridge.c`), because
-  libpurple 2's event loop belongs to the UI: Pidgin's is GLib's, which
-  is thread-safe, but BitlBee's and other UIs' are not documented as
+  A descriptor rather than `purple_timeout_add(0, ...)` from a foreign
+  thread, which purple-presage uses (`src/c/bridge.c`): libpurple 2's
+  event loop belongs to the UI. Pidgin's is GLib's, which is
+  thread-safe, but BitlBee's and other UIs' are not documented as
   callable from another thread. Writing to a pipe is safe from any
   thread, and `purple_input_add` is called once, on the main thread.
   (Windows, §13 step 9, wakes through a loopback socket pair, since
@@ -837,7 +835,7 @@ The functions. *Process* calls take no account:
 |---|---|
 | `mimi_status mimi_account_open(const mimi_account_config *, mimi_account **out, char **error)` | checks the configuration and starts connecting in the background (§6.2, §7); the result is `MIMI_EV_CONNECTED` or `MIMI_EV_DISCONNECTED`. The config holds the base directory, user URI, provider URL, token (NULL: use the stored one, §12.3), invite policy, KeyPackage target, fallback sync interval, and `take_over` (§6.6) |
 | `void mimi_account_close(mimi_account *)` | starts the release path (§6.3); the handle is invalid on return |
-| `mimi_status mimi_account_get_info(mimi_account *, mimi_account_info **)` + free | user URI, handle, this device's Client id and key fingerprint, state directory. Named `mimi_account_info` in this table until step 4 was built: C puts a typedef and a function in one namespace, so the name collided with the `mimi_account_info` struct and no glue could compile. Renamed 2026-11-22 |
+| `mimi_status mimi_account_get_info(mimi_account *, mimi_account_info **)` + free | user URI, handle, this device's Client id and key fingerprint, state directory. Not `mimi_account_info` (renamed 2026-11-22): C puts a typedef and a function in one namespace, so that name collides with the `mimi_account_info` struct and no glue compiles |
 
 *Reads* (synchronous, from the store's records):
 
@@ -923,8 +921,8 @@ libpurple 2 glue:
 - `line_html`: the whole line libpurple 2 shows for the event, with the
   text forms of §8.6 to §8.8.
 
-So the text forms, the escaping and the diffing are Rust, tested in
-Rust, and the C glue only places lines.
+The text forms, the escaping and the diffing are Rust, tested in Rust;
+the C glue only places lines.
 
 ### 5.7 What the library runs per account
 
@@ -1015,14 +1013,13 @@ writes.
    older one.
 
    A request is **fresh** for the wait of item 3 plus 5 s (INVENTED), 35 s
-   in all. A request older than that is stale and is ignored and deleted,
-   by whoever finds it. Without that rule a request left behind by a B
-   that was killed between items 2 and 4 stays in the directory forever,
-   and every later holder reads it as a live demand and releases the
-   account the moment it takes it: one dead instance would make the
-   account unusable for everyone after it. Found while building step 4
-   (bead mimid-2vxv item 3); the rule is purple-mimi's own, since the
-   takeover protocol is.
+   in all. A request older than that is stale, and whoever finds it
+   ignores and deletes it. Without that rule a request left behind by a
+   B killed between items 2 and 4 stays in the directory forever, and
+   every later holder reads it as a live demand and releases the account
+   the moment it takes it: one dead instance would make the account
+   unusable for everyone after it (bead mimid-2vxv item 3). The rule is
+   purple-mimi's own, as the takeover protocol is.
 3. Poll `try_lock` every 100 ms (INVENTED) for up to 30 s (INVENTED).
    Show progress "Waiting for another instance to release this account".
 4. If the 30 s run out: delete `takeover` if it still holds B's nonce,
@@ -1031,14 +1028,12 @@ writes.
    program." B never breaks the lock, never deletes `lock`, and never
    opens the database.
 
-   The message names no process. An earlier draft of this item said
-   "(process <pid> if known)", and bead mimid-2vxv item 4 proposed having
-   the holder write its pid into the lock file to fill that in; Mark
-   decided against it (decision mimid-1wgh.90). A pid buys nothing here:
-   `flock` is released when its process dies, so a crashed holder leaves
-   no stuck lock and the account is simply free, which means the pid
-   would only ever label an error the user already understands — while
-   inviting exactly the acting-on-it that a reused pid makes unsafe.
+   The message names no process, and the holder writes no pid into the
+   lock file (bead mimid-2vxv item 4; Mark decided against it, decision
+   mimid-1wgh.90). `flock` is released when its process dies, so a
+   crashed holder leaves no stuck lock and the account is free: a pid
+   would label an error the user already understands, and acting on a
+   reused pid is unsafe.
 5. With the lock: check the inode (§6.2); delete `takeover` if it holds
    B's own nonce, and leave it if another nonce is there (a third
    instance asked after B; the watch in item 6 hands over to it).
@@ -1069,11 +1064,11 @@ and a poisoned account):
    Items 8 and 9 are one call: `Runner::join_within(10 s)`, which waits
    the grace period out, aborts the loops still running and names them,
    and awaits each aborted task so that every loop has dropped its
-   reference to the store before it returns — which is what item 10 then
-   counts on. `Runner::join` waits for ever and is the daemon's; it was
-   the only choice when step 4 was built, so the store and its lock were
-   kept until the process exited (bead mimid-2vxv item 2). A loop stuck
-   in a synchronous call cannot be cut even so, and item 10 reports it.
+   reference to the store before it returns, which is what item 10
+   counts on. `Runner::join`, the daemon's, waits for ever: with it the
+   store and its lock are held until the process exits (bead mimid-2vxv
+   item 2). A loop stuck in a synchronous call cannot be cut even so,
+   and item 10 reports it.
 10. One last `Store::save`, then drop the `Store`, the `Agent` and with
     them both database connections (the agent's, which the MLS store
     shares, and the store's own; `db.rs`). The library then checks that
@@ -1185,8 +1180,7 @@ On a `404` at the upgrade, the library fails the connection with
 serve mimid's live stream. purple-mimi needs a mimid provider with
 `live_stream = true`; ask its operator." It is fatal: reconnecting does
 not help. agent-core reports it as `AgentError::StreamOff` (built in
-step 3a; before, it was `AgentError::Stream` with the WebSocket
-library's text).
+step 3a).
 
 The library does not read the JMAP Session first to look for the
 `tag:reviewcommit.com,2026:mimid:live` capability: the stream "does not
@@ -1232,14 +1226,13 @@ answered; the first sync's messages then arrive as events.
 
   The library learns of it from the `AfterSync` hook it installs on the
   runner (`RunnerHooks::after`), which is handed each pass's
-  `Result<&SyncReport, &SyncError>`. The runner itself only logs a failed
-  sync, so before that hook existed nothing could report this at all
-  (bead mimid-2vxv item 1). A single failure is not a lost connection:
-  the sync retries at the next turn and nothing is lost either way, so
-  whether to report one failure or a run of them is the library's, not
-  the runner's. libpurple then reconnects by its own rules: Pidgin 2 with its
-  increasing delay (*from memory*), Pidgin 3 after a minute. While
-  disconnected the user cannot send, which is the truth: sending needs
+  `Result<&SyncReport, &SyncError>`; the runner itself only logs a
+  failed sync (bead mimid-2vxv item 1). A single failure is not a lost
+  connection: the sync retries at the next turn and nothing is lost
+  either way, so whether to report one failure or a run of them is the
+  library's, not the runner's. libpurple then reconnects by its own
+  rules: Pidgin 2 with its increasing delay (*from memory*), Pidgin 3
+  after a minute. While disconnected the user cannot send: sending needs
   the hub.
 - **Rate limits** are the stream's: at most 16 requests outstanding per
   connection, and `rateLimited` with or without `retryAfter`, waited out
@@ -1397,8 +1390,8 @@ send them (the store limits a reaction's length,
   the user picks the destination, and the transfer's init function calls
   `mimi_save_attachment` to copy the blob there. purple-presage does
   the same with its own data (`src/c/receive_attachment.c`). The file
-  name offered is the store's safe name (`content.rs`). I do not offer
-  every file automatically: a busy room would open a dialog per file.
+  name offered is the store's safe name (`content.rs`). Files are not
+  offered automatically: a busy room would open a dialog per file.
 - **Sent:** `send_file` (IMs) and `chat_send_file` (chats, in 2.14) make
   a sending `PurpleXfer`; its init function hands the chosen path to
   `mimi_send_file` and completes the transfer on `MIMI_EV_DONE`.
@@ -1500,17 +1493,16 @@ tracks the latest alpha only.
 
 ### 10.1 Build
 
-- **CMake**, calling cargo directly with `add_custom_command` to build
-  `libpurple_mimi_ffi.a`, then compiling each glue into a shared module
-  linked with it. purple-presage uses CMake with Corrosion fetched at
-  configure time (`FetchContent`, `CMakeLists.txt`); I would call cargo
-  directly instead, about 40 lines of CMake (*estimate*), so a distro
-  build needs no network but `cargo --offline` with vendored crates.
-  libpurple 2 is found with `pkg-config purple`, libpurple 3 with
-  `pkg-config purple-3` (*from memory* for the name). Either glue is
-  optional: `-DPURPLE2=ON|OFF`, `-DPURPLE3=ON|OFF`. Meson, which Pidgin
-  3 uses, has weak cargo support. Mark chose CMake calling cargo
-  directly (decision PQ8).
+- **CMake** (decision PQ8), calling cargo directly with
+  `add_custom_command` to build `libpurple_mimi_ffi.a`, then compiling
+  each glue into a shared module linked with it: about 40 lines of
+  CMake (*estimate*), and a distro build needs no network but
+  `cargo --offline` with vendored crates. Not Corrosion fetched at
+  configure time, which purple-presage uses (`FetchContent`,
+  `CMakeLists.txt`), and not Meson, which Pidgin 3 uses and whose cargo
+  support is weak. libpurple 2 is found with `pkg-config purple`,
+  libpurple 3 with `pkg-config purple-3` (*from memory* for the name).
+  Either glue is optional: `-DPURPLE2=ON|OFF`, `-DPURPLE3=ON|OFF`.
 - **Static linking.** The Rust library is a `staticlib` linked into
   each `.so` (Linux) or `.so` bundle (Homebrew's libpurple loads `.so`
   plugins on macOS too, *from memory*). The plugin then depends only on
@@ -1580,9 +1572,9 @@ tracks the latest alpha only.
   sync; takeover while a send is in the outbox (the message arrives
   exactly once); the owner stopped with `SIGSTOP` (the newcomer times
   out and never opens the database, which a test-only counter of
-  database opens checks); the owner killed with `SIGKILL` (immediate takeover, hot
-  journal rolled back); the lock file deleted under the owner (§6.5);
-  three instances racing.
+  database opens checks); the owner killed with `SIGKILL` (immediate
+  takeover, hot journal rolled back); the lock file deleted under the
+  owner (§6.5); three instances racing.
 - **C ABI tests:** a C program calls every function with NULLs, invalid
   UTF-8, a wrong thread and a closed account, under AddressSanitizer
   and UndefinedBehaviorSanitizer, and under valgrind with Pidgin's
@@ -1738,14 +1730,14 @@ Effort in lines (*estimates*), no calendar time.
 | 8 | mimid-s4oy.8 | **Packaging and release** for Linux and Homebrew macOS (§10.3), licence files, README; announce only with Mark's OK | 300 to 600, plus the README |
 | 9 | mimid-s4oy.11 | **Windows i686 DLL** for Pidgin 2.14 (P7): `i686-pc-windows-gnu` or `-msvc` (purple-presage uses MSVC x86), `aws-lc-sys` on i686, `LockFileEx` and the socket-pair wake-up, the state under `%APPDATA%\.purple`, CI | 400 to 800 |
 
-Order: 3p comes first, before 4 (decision PQ7). 3a and 4 can run in parallel (4 pins a mimid revision from 3a
-before it needs the new calls); 5 needs 4 and 3a; 6 and 5b need 5 (5b
-needs the core of 5, and can run beside 6); 7 needs 5 and 5b for their
-halves; 8 needs 7; 9 needs 8. Step 6 also waits for epic mimid-qqtk (replies,
-reactions, attachment URLs), as its bead says.
+Order: 3p comes first, before 4 (decision PQ7). 3a and 4 can run in
+parallel (4 pins a mimid revision from 3a before it needs the new
+calls); 5 needs 4 and 3a; 6 and 5b need 5 (5b needs the core of 5, and
+can run beside 6); 7 needs 5 and 5b for their halves; 8 needs 7; 9
+needs 8. Step 6 also waits for epic mimid-qqtk (replies, reactions,
+attachment URLs), as its bead says.
 
-Total about 13,000 to 19,000 lines (*estimate*). §2.3 guessed 4,000 to
-5,000 for (b); that counted one libpurple 2 glue and no tests. The
-difference is the libpurple 3 glue, the takeover, and tests in three
-harnesses.
+Total about 13,000 to 19,000 lines (*estimate*). §2.3's 4,000 to 5,000
+for (b) counted one libpurple 2 glue and no tests; the difference is the
+libpurple 3 glue, the takeover, and tests in three harnesses.
 

@@ -4,7 +4,7 @@ A Rust reference implementation of IETF MIMI (More Instant Messaging Interoperab
 
 ## Specifications
 
-mimid targets the latest revision of each draft. Where the drafts are ambiguous, the chosen reading is recorded as a decision and cited in the code.
+Where a draft is ambiguous, the chosen reading is recorded as a decision and cited in the code.
 
 | Draft | Target | Notes |
 |---|---|---|
@@ -37,8 +37,8 @@ mimid also uses values of its own from the private-use range of the MLS Componen
 
 These are deliberate in the current version:
 
-- **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures, with keys configured per peer or published in DNS at `<selector>._mimi.<domain>` (draft-atwood-mimi-provider-auth-00; `[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key and its DNS record). DNS keys are looked up with DNSSEC validation, so the resolvers in `dns_servers` must pass DNSSEC records through. A peer's TLS client certificate authenticates it when its path validates against a CA configured in `pkix_anchors` and it names the peer's domain as a SAN dNSName, or when it matches DNSSEC-secure TLSA records the peer publishes at `_mimi._client.<domain>` (DANE; on unless `dane = false`; usages DANE-EE and DANE-TA only); the certificate reaches mimid from its own TLS listener (`[tls]`) or from a trusted proxy (`[trusted_proxy]`). mimid presents its own client certificate only to the peers named with `client_certificate = true` (or given their own `identity`); setting `[peer_tls.identity]` alone presents it to nobody, because offering a certificate a peer does not trust kills the handshake before HTTP and hides the signature that would have worked (decision mimid-75nk.14). A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid has both halves, but they haven't been deployed or tested with a peer yet, so it doesn't claim conformance.
-- **BasicCredential by default.** A client's credential is a BasicCredential holding its user's MIMI URI, so the user's provider can claim any identity for its own users, and mimid offers no protection against a malicious provider for them. In the terms of draft-barnes-mimi-identity-arch-04 §6: the end-to-end protocol is MLS (RFC 9420); there is no revocation; and the only authority behind such a leaf is, implicitly, the provider of the URI's domain. The credential-to-domain rule is open in mimi-protocol#159. A user can instead use a did:webvh credential (draft-atwood-mls-didwebvh-credential; `[did_webvh]` in the agent's configuration): the user's own keys sign the log that authorizes each device, members pin the user's DID on first sight and flag a change, and a revoked device is removed from every room. That protects against the provider only from first contact on.
+- **Provider authentication is partial.** Providers prove who they are with RFC 9421 request signatures, under keys configured per peer or published in DNS at `<selector>._mimi.<domain>` (draft-atwood-mimi-provider-auth-00; `[provider_auth]` in the configuration; `mimid admin <config> provider-key` prints this server's key and its DNS record). DNS keys are looked up with DNSSEC validation, so the resolvers in `dns_servers` must pass DNSSEC records through. A peer's TLS client certificate authenticates it when its path validates against a CA configured in `pkix_anchors` and it names the peer's domain as a SAN dNSName, or when it matches DNSSEC-secure TLSA records the peer publishes at `_mimi._client.<domain>` (DANE; on unless `dane = false`; usages DANE-EE and DANE-TA only); the certificate reaches mimid from its own TLS listener (`[tls]`) or from a trusted proxy (`[trusted_proxy]`). mimid presents its own client certificate only to the peers named with `client_certificate = true` (or given their own `identity`); setting `[peer_tls.identity]` alone presents it to nobody, because offering a certificate a peer does not trust kills the handshake before HTTP and hides the signature that would have worked (decision mimid-75nk.14). A peer set to `observe` is let through unauthenticated. protocol-07 requires mutually authenticated TLS; mimid has both halves, but they haven't been deployed or tested with a peer yet, so it doesn't claim conformance.
+- **BasicCredential by default.** A client's credential is a BasicCredential holding its user's MIMI URI, so the user's provider can claim any identity for its own users; mimid offers them no protection against a malicious provider. In the terms of draft-barnes-mimi-identity-arch-04 §6: the end-to-end protocol is MLS (RFC 9420); there is no revocation; and the only authority behind such a leaf is, implicitly, the provider of the URI's domain. The credential-to-domain rule is open in mimi-protocol#159. A user can instead use a did:webvh credential (draft-atwood-mls-didwebvh-credential; `[did_webvh]` in the agent's configuration): the user's own keys sign the log that authorizes each device, members pin the user's DID on first sight and flag a change, and a revoked device is removed from every room. That protects against the provider only from first contact on.
 - **Peers come from configuration**, not DNS discovery.
 
 ## Known gaps
@@ -55,9 +55,9 @@ Not deliberate; each is being fixed:
 
 - **Room size.** One provider sends another at most 4 MiB in a request or response body (`MAX_BODY_LEN` in `mimid-server`). A Welcome to a new member and a GroupInfo answer each carry the room's whole member tree, so the tree must fit that cap. Measured with `crates/mimid-server/tests/hub_welcome_tree.rs` at 65 and 257 leaves (BasicCredential, X25519 and Ed25519), the tree grows by 246 octets per leaf; with every parent node filled in (about 70 octets more each) it is nearer 315. 4 MiB is then about 13,000 to 17,000 leaves. Each device of a member is a leaf, so at three devices a member a room tops out at roughly 4,000 to 5,500 members, and fewer with did:webvh credentials, whose leaves carry the user's DID log. The hub refuses an add whose Welcome or GroupInfo could not reach the new members (`welcome_too_large` in its log). Mark's decision of 2026-11-21 keeps the 4 MiB cap; the gap in the drafts is noted for the working group in bead mimid-3hoq.
 
-Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
+- **Message retention.** The server keeps each encrypted message 7 days after the hub accepted it, then deletes it (`message_retention_secs` in the server's configuration: a number of seconds, at least 3600, or `"unlimited"`). It says so to clients as `messageRetention` in the JMAP Session's mimi capability and in the live stream's `ProviderHello`, and leaves that out when unlimited. A sweep runs every 10 minutes and deletes in batches of 500 rows, so it never holds the database for long. An agent that was away longer, and so missed a Commit, rejoins each such room by external Commit when the room's policy lets it, and shows one notice in the room saying which messages could not be delivered; otherwise it leaves the room, which then needs a new invite. An operator may also delete old messages by hand (`follower_event` and `room_event`, with the sqlite3 CLI, the server running or not): clients then get `cannotCalculateChanges`, `notFound`, `anchorNotFound` or, on the live stream, `cannotResume`, and recover the same way. Decisions mimid-1wgh.82, mimid-1wgh.83.
 
-- **Message retention.** The server keeps each encrypted message 7 days after the hub accepted it, then deletes it (`message_retention_secs` in the server's configuration: another number of seconds, at least 3600, or `"unlimited"`). It says so to clients as `messageRetention` in the JMAP Session's mimi capability and in the live stream's `ProviderHello`, and leaves that out when unlimited. A sweep runs every 10 minutes and deletes in batches of 500 rows, so it never holds the database for long. An agent that was away longer, and so missed a Commit, rejoins each such room by external Commit when the room's policy lets it, and shows one notice in the room saying which messages could not be delivered; otherwise it leaves the room, which then needs a new invite. An operator may also delete old messages by hand (`follower_event` and `room_event`, with the sqlite3 CLI, the server running or not): clients then get `cannotCalculateChanges`, `notFound`, `anchorNotFound` or, on the live stream, `cannotResume`, and recover the same way. Decisions mimid-1wgh.82, mimid-1wgh.83.
+Each crate documents its own limitations in the `# Limitations` section of its rustdoc.
 
 ## Crates
 
@@ -86,7 +86,7 @@ cargo build --workspace
 cargo test --workspace --all-features
 ```
 
-The full set of checks CI runs is in `.github/workflows/ci.yml`. Tests are fully offline.
+The checks CI runs are in `.github/workflows/ci.yml`. Tests are fully offline.
 
 To run the server: `mimid <config.toml>`. Every configuration key, the admin commands and how to stop the server are in [docs/operating.md](docs/operating.md).
 
@@ -94,8 +94,8 @@ To run the agent for one user: `mimid-agent <config.toml>`. Its configuration, t
 
 ## Interoperability
 
-Wire-format fixtures come from sources outside mimid: draft examples, working group files, hand-encoded bytes, and other implementations (OpenMLS, mls-rs, Haven's mimi-core), each with a `PROVENANCE` file. Spec errata found along the way go back to the working groups.
+Wire-format fixtures come from sources outside mimid: draft examples, working group files, hand-encoded bytes, and other implementations (OpenMLS, mls-rs, Haven's mimi-core), each with a `PROVENANCE` file. Spec errata go back to the working groups.
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions before the commit that made this change were published under AGPL-3.0-only.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Versions before the relicensing were published under AGPL-3.0-only.

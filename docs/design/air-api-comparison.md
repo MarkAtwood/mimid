@@ -181,7 +181,7 @@ is `{sequence_number, ciphertext}`.
 Resume semantics (rpc comment and `backend/src/listen_session.rs`):
 
 - An ack deletes the acknowledged messages from the queue
-  (`Queue::delete`). The server keeps nothing the client acked.
+  (`Queue::delete`).
 - If the client half-closes its side, the server handles every request
   received before and closes with `OK`. `OK` means every ack sent is
   durable. Any other end leaves the last acks unconfirmed, and those
@@ -302,7 +302,7 @@ draft-atwood-jmap-chat-00; RFC 8620 items are what both build on.
 | `KeyPackage/changes` | none (no signal that a KeyPackage was handed out) |
 | `KeyPackage/set` create | `PublishKeyPackages`, `PublishApqKeyPackages`, `StageKeyPackages` |
 | `KeyPackage/set` destroy | none |
-| `KeyMaterial/fetch` | `KeyPackage`, `ApqKeyPackage` (one per call; client fans out per device itself, as far as I can tell) |
+| `KeyMaterial/fetch` | `KeyPackage`, `ApqKeyPackage` (one per call; the client fans out per device itself, not traced) |
 | `Consent/get`, `/changes`, `/query`, `/set` | none; first contact is `ConnectUsername` + connection groups, and later KeyPackage access is by `FriendshipToken` |
 | `Chat/get` with `roomId`, `roomBound` | none: the server keeps no per-user list of groups |
 | `Chat/set` `privateMetadata` (F6) | none; Air uses its self-group and `group_bootstrap` echoes for sibling devices |
@@ -321,8 +321,7 @@ draft-atwood-jmap-chat-00; RFC 8620 items are what both build on.
 
 ## 3. What Air has that the draft lacks
 
-Numbered A1 onward, in the style of F1 to F18. "No change" items are
-kept so the list is complete.
+Numbered A1 onward, in the style of F1 to F18.
 
 ### A1. Nothing bounds how long a provider keeps FanoutMessages
 
@@ -442,7 +441,7 @@ And extend the base draft's `rateLimited` registration to name this
 document's methods.
 
 **Built** (bead mimid-e64f.21; jmap-chat-spec 43ee02c, bde5330).
-mimid-server's limits on the draft's methods, all of them: a token
+All of mimid-server's limits on the draft's methods: a token
 bucket per account on `KeyMaterial/fetch` (the draft's SHOULD; burst 30,
 then one a second, INVENTED; `[key_material_rate]`, `burst = 0` for
 none), shared by both bindings and answered `rateLimited` with
@@ -503,7 +502,7 @@ the draft or in mimid changes because of it.
 | A6 | The caught-up point is implicit | Air sends `QueueEmpty` after the backlog, so a client can process a batch and show "up to date". JMAP has this already: `Message/changes` with `hasMoreChanges: false`. mimid's stream has the `Subscribe` `Ack`. |
 | A7 | One listener per client, and what ends a listen | Air's `Listen` defines its endings: half-close then `OK` means acks are durable; a newer listener evicts the older with `ABORTED`; shutdown is `UNAVAILABLE`. The draft's push is EventSource, where the client keeps its position and nothing is acked, so there is nothing to make durable. No change for JMAP. Worth copying in a gRPC binding (§6). |
 | A8 | Client software version policy | Air refuses expired client versions and warns in advance (`VersionStatus.expires_at`). The draft versions the protocol by capability URN only. No change. Which client builds a provider accepts is product policy, and a client-reported version is not a security check. |
-| A9 | Metadata the provider sees | Air's DS stores per member only a sealed queue reference and a domain; the QS knows queues by random ids unrelated to the AS user; group state is encrypted at rest under a key only members hold; logs use per-process pseudonyms (`backend/src/pseudonym.rs`). In the draft the provider knows the account's `userUri`, every room each account is in, and stores GroupInfo in the clear as hub. **Draft.** §Security Considerations already states what a provider sees. No change. MIMI's hub must answer other providers' GroupInfo requests and enforce room policy on user URIs without a member present, so Air's EAR-key and sealed-reference design does not carry over to a MIMI hub. Worth a sentence in a later version if someone asks why. |
+| A9 | Metadata the provider sees | Air's DS stores per member only a sealed queue reference and a domain; the QS knows queues by random ids unrelated to the AS user; group state is encrypted at rest under a key only members hold; logs use per-process pseudonyms (`backend/src/pseudonym.rs`). In the draft the provider knows the account's `userUri`, every room each account is in, and stores GroupInfo in the clear as hub. **Draft.** §Security Considerations already states what a provider sees. No change. MIMI's hub must answer other providers' GroupInfo requests and enforce room policy on user URIs without a member present, so Air's EAR-key and sealed-reference design does not carry over to a MIMI hub. Worth a sentence in a later version. |
 | A10 | Ephemeral data between a user's devices | Air's `Listen` relays a small encrypted state blob between a user's listening devices (`ReportClientStateListenRequest`, `SiblingClientState`) and has an unused ephemeral payload event (`QueueEventPayload`). The draft has `privateMetadata` (F6) for state that must persist, and nothing ephemeral for MLS rooms. No change. Air does not use the ephemeral event yet, and typing indicators in an encrypted room are a MIMI content question. |
 | A11 | Registration gating, usernames, device linking, Privacy Pass | Air has invitation codes, a push-delivered admission challenge, hashed usernames with expiry, a device-linking relay, and Privacy Pass tokens that pay for username operations and connection package fetches. No change. Account creation and discovery are out of scope for the draft, and a new device joins by external commit with the account's credentials. Privacy Pass as a rate limit for `KeyMaterial/fetch` from other providers would be a MIMI protocol matter. |
 | A12 | Group deletion and targeted messages | Air can close a group with a tombstone (`DeleteGroup`, `GROUP_CLOSED`) and send to one member (`TargetedMessage`, a stopgap "until we implement MLS's targeted message feature"). No change. MIMI has neither; both would start in MIMI protocol or room policy, not here. |
@@ -550,7 +549,7 @@ client:
   `ExternalCommitInfo` and `EpochSnapshot`, and checked by the DS on
   adds and removes (`room_state_change_role` in
   `backend/src/ds/group_operation.rs`). Whether that crate tracks
-  draft-ietf-mimi-room-policy-04 I did not check; it is pinned to
+  draft-ietf-mimi-room-policy-04 was not checked; it is pinned to
   rev 603f3e0 of phnx-im/mimi-room-policy.
 - **MLS.** RFC 9420 throughout, via OpenMLS and `mls-assist`, plus the
   APQ pair and virtual clients, both Phoenix-specific.
@@ -566,9 +565,9 @@ Air's DS, but the API would change in every rpc that names a group.
 
 ## 6. A mimid gRPC binding
 
-A third thin layer over the core functions of
-binary-live-stream.md §5.10, next to JMAP and the CBOR stream, with the
-same behaviour and its own shape. Names are INVENTED, NOT FROM SPEC.
+A third layer over the core functions of binary-live-stream.md §5.10,
+next to JMAP and the CBOR stream, with the same behaviour. Names are
+INVENTED, NOT FROM SPEC.
 
 Package `mimid.client.v1`. Bearer token in the `authorization`
 metadata, checked by the same code as the JMAP `Account` extractor and

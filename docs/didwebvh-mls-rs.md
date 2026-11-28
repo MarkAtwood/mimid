@@ -2,8 +2,8 @@
 
 Bead mimid-4lp4.2. Question: can an mls-rs client share a group with a mimid
 user who has two `did_webvh` devices, and what does the mls-rs side need?
-Measured against stock mls-rs at rev d9af950 (the rev mimid pins, decision
-mimid-1wgh.4.13), with no patches to mls-rs. The tests are in
+Measured against stock, unpatched mls-rs at rev d9af950 (the rev mimid pins,
+decision mimid-1wgh.4.13). The tests are in
 `crates/mimi-mls/tests/didwebvh_mls_rs.rs`.
 
 **Short answer.** Yes, until a Commit has to change the `did_webvh_heads`
@@ -43,7 +43,7 @@ BasicCredentials with one name.
 
 ## A Commit that changes the record removes the mls-rs member (tests)
 
-Bob does not list the AppDataUpdate proposal type, which is the truth for
+Bob does not list the AppDataUpdate proposal type, which is accurate for
 mls-rs. Without the removal, OpenMLS refuses to build any Commit that
 changes the record (`ProposalValidationError(UnsupportedProposalType)`,
 RFC 9420 §12.2). `Member::commit` therefore adds a Remove of every member
@@ -111,8 +111,8 @@ Two things the external join needed that the Welcome join does not:
 | Test | Result |
 |---|---|
 | `an_identity_provider_keyed_by_scid_alone_refuses_the_second_device` | With identity = SCID, mls-rs's `join_group` fails with `DuplicateLeafData(0)`. |
-| `mls_rs_cannot_process_a_commit_that_changes_the_record` | Bob lists AppDataUpdate (0x0008) even though mls-rs cannot process it, so mimid does not remove him. mimid then commits the Add of Carol with an AppDataUpdate for component 0xF013. mls-rs cannot decode the message (`SerializationError(InvalidVarIntPrefix(3))`): it reads an unknown proposal type as one `opaque<V>`, and the component ID's first byte 0xF0 has the varint prefix 0b11 that RFC 9420 §2.1.2 reserves. With another component ID it would misparse instead, and in any case it could not apply the update. Bob stays in the old epoch (`EpochNotFound` on the next message). He gets back in by a Commit that removes his stale leaf and adds a fresh KeyPackage, which changes no record. |
-| `mimid_refuses_an_mls_rs_commit_that_needs_a_record_change` | mls-rs adds Carol. Without AppDataUpdate it cannot add her entry to the record, and mimid refuses the Commit (`DidWebvh(Rule(ExtensionMismatch))`, §Expected Heads). Writing the new record with a GroupContextExtensions proposal, the only GroupContext change RFC 9420 gives mls-rs, is refused too: first because `app_data_dictionary` is not in `required_capabilities` (OpenMLS, feedback item 23); with that added, because of mls-extensions-11 §4.7 (`CannotUpdateDictionaryDirectly`). |
+| `mls_rs_cannot_process_a_commit_that_changes_the_record` | Bob lists AppDataUpdate (0x0008) even though mls-rs cannot process it, so mimid does not remove him. mimid then commits the Add of Carol with an AppDataUpdate for component 0xF013. mls-rs cannot decode the message (`SerializationError(InvalidVarIntPrefix(3))`): it reads an unknown proposal type as one `opaque<V>`, and the component ID's first byte 0xF0 has the varint prefix 0b11 that RFC 9420 §2.1.2 reserves. With another component ID it would misparse instead, and could not apply the update either way. Bob stays in the old epoch (`EpochNotFound` on the next message). He gets back in by a Commit that removes his stale leaf and adds a fresh KeyPackage, which changes no record. |
+| `mimid_refuses_an_mls_rs_commit_that_needs_a_record_change` | mls-rs adds Carol. Without AppDataUpdate it cannot add her entry to the record, and mimid refuses the Commit (`DidWebvh(Rule(ExtensionMismatch))`, §Expected Heads). Writing the new record with a GroupContextExtensions proposal, the only GroupContext change RFC 9420 gives mls-rs, is refused too: `app_data_dictionary` is not in `required_capabilities` (OpenMLS, feedback item 23), and with that added, mls-extensions-11 §4.7 refuses the dictionary change (`CannotUpdateDictionaryDirectly`). |
 
 Which Commits change the record (draft §Expected Heads): adding a
 `did_webvh` user the record has not seen, adding or updating a device whose

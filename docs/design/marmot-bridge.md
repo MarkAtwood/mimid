@@ -3,9 +3,9 @@
 Design note, 2026-11-21. It works out option (b) of
 nostr-comparison.md: a bridge between a MIMI room and a Marmot group
 (the protocol behind the White Noise app), driving MDK's `wn-agent`
-over its control socket. Mark answered its twelve open questions the
-same day (§10).
-The step plan of §9 is filed as beads under epic mimid-kiy1.
+over its control socket. The decisions Mark made on it the same day
+are in §10, and the step plan of §9 is filed as beads under epic
+mimid-kiy1.
 
 Sources read, with the version of each:
 
@@ -27,7 +27,8 @@ read, so the two notes describe the same snapshot. Paths below such as
 gone to the Marmot authors, to #mimi or to any other list. Two WG
 issues are drafted (§3.1, §3.2) and wait for Mark's OK.
 
-Values marked INVENTED are mine, not from any spec or from MDK.
+Values marked INVENTED come from this note, not from any spec or from
+MDK.
 
 ## 0. What the comparison left open, now checked
 
@@ -198,8 +199,7 @@ mimid-agent:
   to it and links none of it.
 
 The cost: a dedicated bridge is a whole mimid-agent with its own state
-directory, server token and KeyPackages. That is the honest shape
-anyway: the bridge is a MIMI user, and its rooms are its own.
+directory, server token and KeyPackages.
 
 **One seam for puppet mode.** Every send to either side goes through a
 *speaker resolver* (INVENTED name) that answers "which identity sends
@@ -227,8 +227,8 @@ bridge assumes one identity per side.
   in docs/agent.md) and fills the gap per linked group with
   `timeline_list` from the last cursor it saved (§6).
 - While wn-agent is unreachable, MIMI-to-Marmot items wait in the
-  queue and Marmot-to-MIMI simply stops; neither side loses anything,
-  since both queues are durable (§8).
+  queue and Marmot-to-MIMI stops. Both queues are durable, so neither
+  side loses anything (§8).
 - SIGINT and SIGTERM stop the bridge with the daemon. In-flight
   requests are abandoned; their queue rows stay and are sent again with
   the same idempotency key on the next start. Held Marmot messages stay
@@ -358,9 +358,6 @@ bridge to invite puppets itself; §3.3.4.) Two gaps:
   but neither the hub nor the agent acts on it today. Listing the
   bridge there is informative only until that changes.
 
-So in practice the bridge is a participant whose role the room's admins
-choose, and the bot entry is how the room says what it is.
-
 ### 3.2 How each side sees bridged speakers
 
 The real author goes into the content. Neither side can authenticate
@@ -399,7 +396,7 @@ it: it is the bridge's claim.
   the sender is always the authenticated MLS sender, and here that is
   the bridge (or, in personal mode, the person running it).
 
-  **Decision 6:** ask the WG now, not after the bridge has been used.
+  **Decision 6:** ask the WG before the bridge is used.
   A mimi-content issue proposing an `onBehalfOf` field (or a
   registered extension key) is drafted alongside the bot-field issue,
   and waits for Mark's OK. mimid keeps the private
@@ -613,12 +610,12 @@ reuses it without change; it is built only after relay mode works
   consent is a Matrix invite), per-user IRC connections (§2). Each
   gateway has the same marking problem (§7.3), which the `onBehalfOf`
   issue (§3.2) and the puppet domain address only in part.
-- **What the XMPP gateway needs from it, checked against the design.**
+- **What the XMPP gateway needs from it.**
   The component (client-survey.md §4) has the same parts as Marmot
   puppet mode, in larger numbers: one virtual MIMI user per XMPP JID
   that takes part (`mimi://<gateway>/u/<escaped jid>`), one JID per MIMI
   user on the component, MIMI rooms as MUCs. So the host's interfaces
-  are fixed with XMPP in mind, not only Marmot:
+  are fixed for XMPP as well as Marmot:
   - virtual users are keyed by an opaque remote id (an npub, a JID),
     with the escaping to a MIMI user part done by the adapter;
   - a virtual user may be in many rooms, and a room may hold many
@@ -639,11 +636,11 @@ reuses it without change; it is built only after relay mode works
 
 #### 3.3.7 Order of work
 
-§9 has the steps. The one ordering that is a design constraint rather
-than a preference: the multi-user host (step 13) is built only after
-relay mode works in real rooms, and the relay bridge then moves onto it
-as the host's first full identity. Personal bridges stay in the
-person's own agent either way.
+§9 has the steps. One ordering is a design constraint rather than a
+preference: the multi-user host (step 13) is built only after relay
+mode works in real rooms, and the relay bridge then moves onto it as
+the host's first full identity. Personal bridges stay in the person's
+own agent either way.
 
 ## 4. Linking and consent
 
@@ -745,8 +742,7 @@ plaintext and keys, so anything that can use its socket or token can
 post in either room under any name behind the "(via bridge)" prefix.
 With a personal bridge that machine is the person's own, so they can
 post in the MIMI room, under their own name, text that seems to come
-from a White Noise member. MIMI members cannot see who the Marmot
-members are, only how many.
+from a White Noise member.
 
 ## 5. Message mapping
 
@@ -852,7 +848,7 @@ limit, which are the contested ones; a longer one adds delay to every
 message for withdrawals the hold cannot catch anyway (a rival Commit
 that reaches wn-agent late opens a later pass, which can still roll
 back up to 5 Commits). The range is 0 to 30 s; 0 turns the hold off
-and leaves only the recheck of §6.5. MIMI to Marmot is not held.
+and leaves only the recheck of §6.5.
 
 1. **Take.** An event arrives on the stream (or from `timeline_list`
    after a gap). If its `marmot_id` is already in the map for this
@@ -892,9 +888,9 @@ and leaves only the recheck of §6.5. MIMI to Marmot is not held.
    `sent` with that key. Not found: it is released again. The outbox
    sends a message again with the same bytes and never encrypts it
    twice (agent-frontends.md §3 step 10), and the delivered copy comes
-   back in the sync, so after both the answer is certain. This also
-   closes the gap the first version of this note left between the
-   outbox's transaction and the store's save. It needs P3.
+   back in the sync, so after both the answer is certain. That covers
+   the gap between the outbox's transaction and the store's save. It
+   needs P3.
 5. **Clocks.** `hold_until` is wall-clock time, so it survives a
    restart. A row whose `hold_until` is more than `hold_secs` in the
    future (the clock went back) is reset to now + `hold_secs`.
@@ -1170,50 +1166,43 @@ process. The only live checks are steps 12 and 16, by hand.
 
 ## 10. Decisions (Mark, 2026-11-21)
 
-Mark's answers to the twelve open questions of the first version. Where
-the answer differs from what that version recommended, the body above
-has been changed to match.
+Mark's twelve decisions on this note. The body above follows them.
 
 1. **Whose Nostr key.** The bridge's own key only; the config pins the
    account id. Applies in every mode, including personal bridges and
-   puppets (§2.3, §2.5, §3.3.3). As recommended.
+   puppets (§2.3, §2.5, §3.3.3).
 2. **Who starts wn-agent.** A separate service, installed with MDK's
-   installer (§2.2). As recommended.
+   installer (§2.2).
 3. **Which MIMI capability may link a room.**
    `canChangeOtherPolicyAttribute` (§4.2); also used to turn puppets on
-   (§3.3.4) and to define a personal bridge's "own rooms" (§2.5). As
-   recommended.
+   (§3.3.4) and to define a personal bridge's "own rooms" (§2.5).
 4. **Expiring messages.** The bridge carries absolute expiry with a
    timed delete of its copy, refuses read rules with a notice, and takes
-   the Marmot group's timer from the linking admin (§5). As recommended.
+   the Marmot group's timer from the linking admin (§5).
 5. **The bot policy gap.** mimid uses `homepage` for the bot's user URI
    (§3.1), and a room-policy issue for a real field is drafted; it is
-   posted only with Mark's OK. As recommended.
-6. **On-behalf-of.** Ask the WG now: an `onBehalfOf` issue is drafted
-   alongside the bot-field issue. mimid uses the private key
-   `mimid-on-behalf-of` until a registered `onBehalfOf` exists (§3.2).
-   *Differs:* the first version waited until the bridge had been used.
+   posted only with Mark's OK.
+6. **On-behalf-of.** Ask the WG before the bridge is used: an
+   `onBehalfOf` issue is drafted alongside the bot-field issue. mimid
+   uses the private key `mimid-on-behalf-of` until a registered
+   `onBehalfOf` exists (§3.2).
 7. **Withdrawn Marmot messages.** Hold each Marmot message a few seconds
    before copying (6 s by default, INVENTED, justified in §6.3), and
-   still retract a copy whose source is later invalidated (§6.5).
-   *Differs:* the first version copied at once and only retracted. The
-   hold queue changes the id map (§6.1), crash safety (§6.3 steps 1
+   still retract a copy whose source is later invalidated (§6.5). The
+   hold queue shapes the id map (§6.1), crash safety (§6.3 steps 1
    and 4), the notice (§4.4) and the failure table (§8).
 8. **wn-agent's DTOs.** mimid's own serde types, tested against
    fixtures from `agent-control` with a `PROVENANCE` file (§9 step 4).
-   As recommended.
 9. **NIP-05 on mimid-server.** mimid-server serves
    `/.well-known/nostr.json` as part of the bridge work (§7.2, §9 step
-   9). *Differs:* the first version put it after the bridge.
+   9).
 10. **Marmot member list.** Accept the member count only, and say so
-    plainly in the link notice (§4.4). As recommended.
+    plainly in the link notice (§4.4).
 11. **Personal bridges.** Allowed: a person may run the bridge in their
     own agent, for their own rooms, with a clear notice (§2.5).
-    *Differs:* the first version said no.
 12. **Puppet mode.** Plan it now, designed into the bridge together
     with a multi-user host (§3.3, §9 steps 13 to 16). Relay mode is
-    built first; puppet mode follows on the host. *Differs:* the first
-    version left it out unless users asked.
+    built first; puppet mode follows on the host.
 
 Two related decisions Mark made the same day on client-survey.md apply
 here: the multi-user host is designed once, in §3.3.6, shaped for the

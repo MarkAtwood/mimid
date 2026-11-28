@@ -120,7 +120,7 @@ before one stored earlier for the same room (§5.5).
 
 **Decision.** Take as proposed. (Mark, 2026-11-20.)
 
-Built: verified that mimid's ids sort in storage order (follower_log.rs `next_message_id`); tests in crates/mimid-server/tests/jmap_room_create.rs (`Message/query` sorted by `id` equals `Message/get` order).
+Built: mimid's ids sort in storage order (follower_log.rs `next_message_id`); tests in crates/mimid-server/tests/jmap_room_create.rs (`Message/query` sorted by `id` equals `Message/get` order).
 
 ## F3. Room/send drops the hub's frank
 
@@ -262,8 +262,7 @@ crates/mimid-server/src/jmap/blobs.rs:456-580).
 
 **Stream.** The same refusals, each with a stream code chosen for its
 status (`notFound`, `forbidden`, `serverUnavailable`, `serverFail`;
-`code_of`, blobs.rs:525). Writing the stream showed that the HTTP route
-was the only place the reasons lived; the two now come from one
+`code_of`, blobs.rs:525). Both bindings take the reasons from one
 function (`fetch_asset_core`).
 
 **Proposed text.** In §Account-Level Capability Object, after
@@ -358,10 +357,10 @@ largest body mimid takes on the protocol routes
 (crates/mimid-server/src/http.rs:90).
 
 **Stream.** `maxRequestBytes`, stated in `ProviderHello`, 4 MiB + 64 KiB
-of raw bytes (decision mimid-1wgh.78). The stream had to pick the
-number again, and got a different effective limit for the same object
-(raw, not base64url): an object a little over 3 MiB fits the stream
-but not one JMAP request with another argument beside it.
+of raw bytes (decision mimid-1wgh.78). Counting raw bytes rather than
+base64url gives the same object a different effective limit on each
+binding: an object a little over 3 MiB fits the stream but not one
+JMAP request with another argument beside it.
 
 **Proposed text.** In §capability, Account-Level Capability Object:
 
@@ -441,19 +440,18 @@ anchor, which RFC 8620 §5.5 provides.)
 
 **Decision.** Take; mimid-server sorts `Message/query` by `id` with an `anchor`, and the agent uses it on `cannotCalculateChanges`. (Mark, 2026-11-20.)
 
-Built: `Message/query` sorts by `id`, and `anchor` with `anchorOffset` 1 gives the later Messages. The stream's counterpart is `Subscribe` with `after` (per Chat, the last Message handled) and no `since`. The agent uses them on `cannotCalculateChanges` and `cannotResume`. The proposed text says "with `anchor` set to the last Message it processed"; with RFC 8620's default `anchorOffset` of 0 the result starts at that Message itself, so the text should say `anchorOffset` 1 (or "the Messages after it"). Fixed in the draft: jmap-chat-spec 813ad11 says `anchorOffset` 1.
+Built: `Message/query` sorts by `id`, and `anchor` with `anchorOffset` 1 gives the later Messages. The stream's counterpart is `Subscribe` with `after` (per Chat, the last Message handled) and no `since`. The agent uses them on `cannotCalculateChanges` and `cannotResume`. The proposed text above, "with `anchor` set to the last Message it processed", starts at that Message itself under RFC 8620's default `anchorOffset` of 0, so it needs `anchorOffset` 1 (or "the Messages after it"); jmap-chat-spec 813ad11 says `anchorOffset` 1.
 
 ## Push semantics (F13 to F17)
 
-Found by the EventSource work of bead mimid-ak29 (the agent following
-the provider's EventSource, crates/mimid-agent-core/src/push.rs and
-crates/mimid-agent/src/push.rs) and recorded here at the coordinator's
-request. Each is about what draft-atwood-jmap-chat-mimi-00 promises a
-client that waits for `StateChange` events (RFC 8620 §7.1, §7.3; base
-draft §Push Notifications) instead of polling. The stream answers all
-five by construction, which is itself the finding: a binding that
-pushes the Messages has to decide each of these, and JMAP leaves them
-open.
+From the EventSource work of bead mimid-ak29 (the agent following the
+provider's EventSource, crates/mimid-agent-core/src/push.rs and
+crates/mimid-agent/src/push.rs). Each is about what
+draft-atwood-jmap-chat-mimi-00 promises a client that waits for
+`StateChange` events (RFC 8620 §7.1, §7.3; base draft §Push
+Notifications) instead of polling. The stream answers all five by
+construction: a binding that pushes the Messages must decide each of
+them, and JMAP leaves them open.
 
 ### F13. What moves the Message and Chat states
 
@@ -478,8 +476,8 @@ the change bus (crates/mimid-server/src/jmap/bus.rs, `Change::RoomEvent`,
 counter (crates/mimid-server/src/jmap/projection.rs:26-35).
 
 **Stream.** Every stored Message reaches the client as a `Deliver`;
-a binding change reaches it as `Changed` `Chat`. The stream had to name
-both because it pushes the objects, not states.
+a binding change reaches it as `Changed` `Chat`. The stream names both
+because it pushes the objects, not states.
 
 **Proposed text.** In §application/mimi-fanout:
 

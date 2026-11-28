@@ -1,13 +1,11 @@
 # Front-end authentication: one credential model for every client protocol
 
-Design note, 2026-11-21, reviewed by Mark the same day: his answers to
-§10 are its "Decisions" section, and the body follows them where they
-differ from the recommendations. Epic mimid-e13m. It covers
+Design note, 2026-11-21, reviewed by Mark the same day: his answers are
+§10, "Decisions", and the body follows them. Epic mimid-e13m. It covers
 how a stock client logs in to mimid-agent over each front end the agent
 has or plans: IRC (mimid-i0id), Matrix (mimid-rvqk), XMPP (mimid-wmdj),
-JMAP Chat (today's front end, and purple-mimi through it), and, for
-completeness, IMAP for Delta Chat, which client-survey.md §5 does not
-plan.
+JMAP Chat (today's front end, and purple-mimi through it), and IMAP for
+Delta Chat, which client-survey.md §5 does not plan.
 
 Mark's rule for this work (2026-11-21): "all of our other c2s
 implementations need good enough, easy to use, not upsetting auth that
@@ -16,14 +14,15 @@ works with existing clients and users and ecosystems."
 It builds on client-survey.md decisions S1 (a TLS listener on an
 address the user names, off by default, the same token, no start
 without TLS) and S3 (SASL PLAIN and PASS in IRC), both on branch
-`store-groundwork`, not yet on main. Values marked INVENTED are mine and
-open to change. Sizes marked *estimate* are guesses against
-mimid-agent-irc (about 4,200 lines). Most of this is now built: the credential table and SCRAM verifiers
-(`mimid-agent-store/src/credentials/`), the TLS core, ACME DNS-01, the
-local CA and tailnet identity (`mimid-agent/src/{tls,acme,local_ca,tailnet}.rs`),
-with tests in `mimid-agent/tests/`. Epic mimid-e13m records which step
-each section became; §9's step plan is kept as the record of the plan,
-not as work outstanding. Nothing here was posted anywhere.
+`store-groundwork`, not yet on main. Values marked INVENTED are open to
+change. Sizes marked *estimate* are guesses against mimid-agent-irc
+(about 4,200 lines). Built so far: the credential table and SCRAM
+verifiers (`mimid-agent-store/src/credentials/`), the TLS core, ACME
+DNS-01, the local CA and tailnet identity
+(`mimid-agent/src/{tls,acme,local_ca,tailnet}.rs`), with tests in
+`mimid-agent/tests/`. Epic mimid-e13m records which step each section
+became; §9's step plan is the record of the plan, not work outstanding.
+Nothing here was posted anywhere.
 
 ## Sources
 
@@ -261,7 +260,7 @@ What matters for the agent:
   (`crypto/XmppDomainVerifier.java:107-141`). So the agent's XMPP domain
   is its TLS name (`alice@host.tailnet.ts.net`), not the MIMI domain.
 - **No client takes a password from a URI or QR code** for an existing
-  account. The setup URIs make a **new** account by in-band
+  account. The setup URIs make a new account by in-band
   registration (XEP-0077) with a token: Conversations sends it in a
   `urn:xmpp:pars:0` `<preauth>` IQ (`xmpp/manager/RegistrationManager.java:224-232`),
   Monal uses `urn:xmpp:ibr-token:0` (XEP-0445) when offered
@@ -286,12 +285,12 @@ What matters for the agent:
 ### 2.5 Delta Chat (IMAP), not planned
 
 Delta Chat logs in with IMAP `LOGIN` only (`src/imap.rs:360-363`). Its
-`dclogin:` QR code **does** carry a password:
+`dclogin:` QR code carries a password:
 `dclogin://user@host/?p=password&v=1`, with host, port, security and a
 certificate-check setting (`src/qr/dclogin_scheme.rs:13-62`). Its
 certificate checks can be set to accept anything, with no pinning
-(`src/login_param.rs:37-60`). Recorded for completeness; client-survey.md
-§5 rules Delta Chat out as a front end.
+(`src/login_param.rs:37-60`). client-survey.md §5 rules Delta Chat out
+as a front end.
 
 ## 3. The credential model
 
@@ -370,24 +369,23 @@ The agent stores SCRAM verifiers, not a password hash:
   the result with each unrevoked credential's StoredKey in constant time.
 - Iterations: 4,096, the floor RFC 7677 sets and what many XMPP servers
   use (INVENTED as a choice).
-- **One salt for every credential** (INVENTED, found while building
-  step 1). A SCRAM server sends the salt before the client has shown
-  anything that picks a credential, and the username cannot pick one
-  (§3.5). So the agent makes one SCRAM salt of 16 random octets when it
-  first makes the credential table, and every credential's verifier
-  uses it; the credentials still differ in StoredKey and ServerKey
-  because their secrets differ. A plain login then costs one PBKDF2
-  derivation however many credentials there are, compared with each
-  StoredKey. What it gives up: an attacker holding the database can
-  test one guess against every credential at once, which matters
-  nothing against 75-bit generated secrets.
+- **One salt for every credential** (INVENTED). A SCRAM server sends
+  the salt before the client has shown anything that picks a credential,
+  and the username cannot pick one (§3.5). So the agent makes one SCRAM
+  salt of 16 random octets when it first makes the credential table, and
+  every credential's verifier uses it; the credentials still differ in
+  StoredKey and ServerKey because their secrets differ. A plain login
+  then costs one PBKDF2 derivation however many credentials there are,
+  compared with each StoredKey. What it gives up: an attacker holding
+  the database can test one guess against every credential at once,
+  which matters nothing against 75-bit generated secrets.
 
 **Why not argon2id as well** (decision A2: no argon2id). An argon2id
 hash beside the SCRAM verifier would not make the stored data harder
 to attack, since an attacker with the database tries the cheapest
 verifier: SCRAM-SHA-256 at 4,096 iterations. It would make each login
 slower, and a plain login has no way to name the credential, so the
-check may run once per unrevoked credential. And an attacker who can read
+check may run once per unrevoked credential. An attacker who can read
 `mimid.sqlite` already has the user's MLS keys and every message in
 plaintext (agent.md, "Files"). The secrets are random, so a stolen
 verifier leaks no password used anywhere else.
@@ -638,20 +636,20 @@ What every client in §2.3 can use:
   from the agent's own certificate). This is a later step, and the
   one-way rule applies: once offered, it MUST stay offered, or
   Conversations calls it a downgrade and Monal disables the account
-  (§2.3). That is the one MUST in this note, because both clients
-  break without it. The same holds for SASL2 once offered: so offer
-  SASL2 from the first XMPP release, never add-and-remove.
+  (§2.3). The same holds for SASL2 once offered: so offer SASL2 from the
+  first XMPP release, never add-and-remove.
 - Username: the local part of the user's URI, and the domain the TLS
-  name (§2.3; decision A10: XMPP addresses use the TLS name). Anything else is `not-authorized`, logged as
-  `username-mismatch`.
+  name (§2.3; decision A10: XMPP addresses use the TLS name). Anything
+  else is `not-authorized`, logged as `username-mismatch`.
 - SCRAM verifiers come from the credential table (§3.3); nothing new is
   stored for SCRAM itself.
 
 ### 4.5 IMAP, if ever
 
 LOGIN and AUTHENTICATE PLAIN, after TLS, against the same credentials.
-The setup output would be a `dclogin:` URL carrying an app password,
-the one client in this note that takes a password by QR code (§2.5).
+The setup output would be a `dclogin:` URL carrying an app password;
+Delta Chat is the only client here that takes a password by QR code
+(§2.5).
 
 ### 4.6 Tailnet identity: the connection is the login
 
@@ -666,11 +664,10 @@ no TLS of its own (`main.go`, `srv.Listen("tcp", ":6667")`).
 **The rule for mimid-agent** (INVENTED, NOT FROM SPEC; decision A7:
 off by default, setup offers it, owners default and the three
 exclusions as below, the fixed word `tailnet` for XMPP SCRAM and
-Matrix). When a
-connection arrives on a listener bound to a tailnet address and
-`[tailnet] identity = true`, the agent MAY identify the client by
-asking tailscaled who it is, and skip the password, if the answer
-matches:
+Matrix). When a connection arrives on a listener bound to a tailnet
+address and `[tailnet] identity = true`, the agent MAY identify the
+client by asking tailscaled who it is, and skip the password, if the
+answer matches:
 
 - the node's user's `LoginName` is in `owners` (default: the user who
   owns the agent's own node, from LocalAPI `status`), **and** the node
@@ -686,7 +683,7 @@ Anything else, including a WhoIs error or tailscaled not answering,
 falls back to the password rules of §3. A failed WhoIs never lets a
 connection in.
 
-The three exclusions, each for a reason:
+The three exclusions:
 
 - **Tagged nodes** have no user: Tailscale gives them a placeholder
   profile (*from memory*: login name `tagged-devices`), and tags are
@@ -768,8 +765,9 @@ the phone but Tailscale.
   (`ipn/ipnserver/server.go:336-353`); the certificate endpoint needs
   write access (root or the operator user) or `TS_PERMIT_CERT_UID`
   (§5.2). The answer is `{Node, UserProfile, CapMap}`
-  (`client/tailscale/apitype/apitype.go:35-42`); `Node.Tags`, and `Node.PrimaryRoutes` and `Node.AllowedIPs`
-  beyond the node's own `Addresses`, carry what the exclusions need. The crate
+  (`client/tailscale/apitype/apitype.go:35-42`); `Node.Tags`, and
+  `Node.PrimaryRoutes` and `Node.AllowedIPs` beyond the node's own
+  `Addresses`, carry what the exclusions need. The crate
   `tailscale-localapi` (0.6.0) does this; a client of our own over
   hyper and `tokio::net::UnixStream` is about 150 to 250 lines
   (*estimate*), with no new dependency beyond what reqwest already
@@ -845,8 +843,7 @@ accept it without a warning.
      `mimid-agent <config> setup tls` asks it, and records the answer
      and the names it covered in the state directory. With `source =
      "tailscale"` and no recorded yes for the configured names, the
-     agent refuses to start and says to run it. There is no silent
-     default.
+     agent refuses to start and says to run it.
    - The agent asks tailscaled for the pair over its LocalAPI,
      `GET /localapi/v0/cert/<name>?type=pair` on the tailscaled socket
      (tailscale `ipn/localapi/cert.go:48-60`). tailscaled answers root,
@@ -862,11 +859,9 @@ accept it without a warning.
      connections.
    - With the listener on the tailnet address the agent can also learn
      which tailnet node and user is connecting, and let the owner's
-     devices in with no password (§4.6). **For phones on a tailnet,
-     `tailscale cert` plus tailnet identity is the least friction of
-     anything in this note**: nothing to install but Tailscale, which
-     the phone needs anyway to reach the agent, and nothing to type but
-     the server name.
+     devices in with no password (§4.6), so a phone has nothing to
+     install but Tailscale, which it needs anyway to reach the agent,
+     and nothing to type but the server name.
 2. **ACME DNS-01, when the user has a domain.** A name such as
    `chat.example.org`, pointing at the agent's address, public or
    private: DNS-01 needs no inbound connection, so it works for a
@@ -892,8 +887,8 @@ accept it without a warning.
 3. **Files the user already has.** `cert` and `key` paths in PEM, read
    at start and again when the files change. This covers a certificate
    from certbot, Caddy, a homelab CA or `tailscale cert` run by a timer.
-   It costs little and is the escape hatch for everything else, so it
-   is in the first TLS step even though it ranks below ACME for ease.
+   It is the escape hatch for everything else, so it is in the first TLS
+   step even though it ranks below ACME for ease.
 4. **A local CA, as the last resort.** The agent makes a CA key and
    certificate in its state directory, and a server certificate from
    it for the names the user gives (a LAN name, an IP address). The CA
@@ -1128,8 +1123,6 @@ client is JMAP. The ranking for a phone, least friction first:
   need to because they pin (§5.1).
 - **Desktops**: the `.crt` into the system store, or the client's own
   setting (WeeChat `tls_fingerprint`, Halloy `root_cert_path`).
-- This is the most upsetting path in this note, which is why it is
-  last.
 
 ## 7. Rate limiting, lockout and logging
 
@@ -1240,9 +1233,9 @@ minutes and credential-stuffing lists; generated passwords are not on
 any list, and §7 keeps the noise down. What this adds over the tailnet
 case is exposure of the agent's code to strangers before login: the
 IRC line parser, the XMPP XML parser, the HTTP stack. That is the
-larger risk, and it is why the docs recommend a tailnet or WireGuard
-address and why a public listener is never the default. A public
-listener is allowed, with a WARN at start (decision A9).
+larger risk, and the reason the docs recommend a tailnet or WireGuard
+address. A public listener is allowed, never a default, with a WARN at
+start (decision A9).
 
 **What this design does not protect against:**
 
@@ -1257,8 +1250,8 @@ listener is allowed, with a WARN at start (decision A9).
 
 Steps 1 to 6, 8, 9, 11 and 12 are built (epic mimid-e13m, which has a
 child bead per step). Steps 7 and 10 wait on the Matrix and XMPP front
-ends, which do not exist. The sizes were estimates made before the work
-and are kept only for the two steps still to come.
+ends, which do not exist. The sizes are estimates made before the work,
+and matter now only for the two steps still to come.
 
 | Step | What | Size | Needed before |
 |---|---|---|---|

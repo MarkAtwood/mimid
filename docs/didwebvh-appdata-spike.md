@@ -11,9 +11,9 @@ handling of `with_heads`, `PendingGroupContextExtensions`) are gone, and the
 scenario tests below are regular tests. The component ID defaults to the
 private-use 0xF013 and stays a setting (decision mimid-1wgh.4.81.35); a
 keyMaterial request from a `did_webvh` room requires the credential type and
-takes it to imply the component (decision mimid-1wgh.4.81.36). The text below
-is the spike's report as written: its references to the extension form, the
-switch and the extension-form tests describe the code before the switch.
+takes it to imply the component (decision mimid-1wgh.4.81.36). References
+below to the extension form, the switch and the extension-form tests
+describe the code before the switch.
 
 **Question.** draft-atwood-mls-didwebvh-credential keeps the
 `did_webvh_heads` record as a GroupContext extension, changed by a
@@ -60,9 +60,9 @@ The update semantics are invented (decision mimid-1wgh.4.81.33): the
 entry with the same `scid`, applied in Commit order. The record's
 existing struct and codec serve unchanged. A whole record is a valid
 update, and so is a single entry. Entries are never removed, so this loses
-nothing the draft keeps. The group rules are not touched: after the
-updates are applied, the record must equal the expected entries, exactly
-as in the extension form.
+nothing the draft keeps. The group rules are unchanged: after the updates
+are applied, the record must equal the expected entries, as in the
+extension form.
 
 mimi-mls is the component's application logic, as it is for the
 mls-extensions-11 §5.1 built-ins, so the `apply` functions of the agent and
@@ -92,9 +92,9 @@ component in `resolve_app_data_updates`), `crates/mimi-mls/src/identity.rs`
 The mimi-mls tests are in `crates/mimi-mls/tests/didwebvh_appdata.rs`, the
 hub tests in `crates/mimid-server/tests/hub_didwebvh_appdata.rs`. The
 unrelated GCE proposal, and the hub tests' rule-breaking Commits, come from
-a plain OpenMLS client that knows nothing of the draft. Two mutations were
-run to check that the tests can fail: an update function that keeps only
-the first entry of each update fails all five mimi-mls tests, and a
+a plain OpenMLS client that knows nothing of the draft. Two mutations show
+that the tests can fail: an update function that keeps only the first
+entry of each update fails all five mimi-mls tests, and a
 `required_removes` that ignores the record's AppDataUpdate fails the hub
 revocation test.
 
@@ -199,14 +199,14 @@ The hub still needs: the rules in its Observer (unchanged), and
 `required_removes` (decisions .26 and .31), now keyed on the record's
 AppDataUpdate rather than on a GCE. Room policy treats the record like any
 component it does not track: no capability, since the rules fix the value.
-The hub code was not changed for the spike; it was opened with the
-component code points.
+The hub code is unchanged for the component form; the hub tests open it
+with the component code points.
 
 ## Recommendation for -01
 
 Carry the record as an `app_data_dictionary` component. It removes Open
-Issue 5 outright, makes the Update-proposal fallback work, lets new users
-join by external Commit (Open Issue 1), and gives MIMI hubs nothing new to
+Issue 5, makes the Update-proposal fallback work, lets new users join by
+external Commit (Open Issue 1), and gives MIMI hubs nothing new to
 special-case. The cost is the dependency on mls-extensions, which MIMI
 already has.
 

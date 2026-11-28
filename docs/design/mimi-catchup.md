@@ -5,12 +5,11 @@ same day: the four questions of §12 are answered and are closed decision
 beads mimid-1wgh.104 to .107, with §7 promoted to bead
 mimid-1wgh.37.105. Implementation is beads mimid-1wgh.37.104.1 to .5.
 
-Mark arrived at this from the opposite direction: meshIRCd's S2S uses a
-vector clock to reconcile what a peer missed (its `SyncRequest`), and
-MIMI has no equivalent at all. The conclusion of that comparison is in
-§3: MIMI wants a scalar sequence, not a vector clock, because it has one
-writer per room. The question it exposed is real even so, and this note
-is about that question.
+meshIRCd's S2S reconciles what a peer missed with a vector clock (its
+`SyncRequest`); MIMI has no equivalent at all. That comparison's
+conclusion is in §3: MIMI wants a scalar sequence, not a vector clock,
+because it has one writer per room. The gap it exposes is real even so,
+and this note is about that gap.
 
 Values marked INVENTED are mine. Both halves are now implemented and
 tested between two providers (§10); nothing has been proposed to the
@@ -34,14 +33,14 @@ stamps an acceptance time and fans out to every follower provider
 (`POST /notify/{roomId}`, protocol-07 §5.5).
 
 Searching protocol-07 for `catch-up`, `missed`, `resync`, `backlog` and
-`fell behind` returns **no hits**. `retry` appears twice, neither time
-about this. So:
+`fell behind` returns no hits. `retry` appears twice, neither time about
+this. So:
 
 - A follower provider that is unreachable during fanout has no specified
   way to learn what it missed, and no way to ask for it.
 - `FanoutMessage` carries the `MLSMessage`, an optional `Frank`, a
-  `RatchetTreeOption` and proposals. It carries **nothing identifying its
-  position** in the room's stream.
+  `RatchetTreeOption` and proposals. It carries nothing identifying its
+  position in the room's stream.
 - The only ordering handle is `accepted_timestamp`, milliseconds since
   the epoch. That is not an ordering key: two messages can share a
   millisecond, and nothing promises the value increases if the hub's
@@ -61,14 +60,12 @@ protocol-07 it does not even know that it should tell them.
 
 ## 2. Why the room itself cannot be eventually consistent
 
-Worth stating once, because it bounds every design below.
-
 RFC 9420 advances a group by exactly one Commit per epoch, and the key
 schedule is derived from that chain. Two Commits applied at epoch N give
-two groups with different secrets and **no merge function exists**. A
-vector clock would let two providers *detect* that they had diverged; it
-would give them nothing to do about it but discard a branch and re-add
-those members, which is strictly worse than preventing the divergence.
+two groups with different secrets and no merge function exists. A vector
+clock would let two providers *detect* that they had diverged; it would
+give them nothing to do about it but discard a branch and re-add those
+members, which is strictly worse than preventing the divergence.
 
 MIMI then makes the authority structural: "The hub of a room is the
 provider identified by the authority of the roomId" (§5.6). The hub's
@@ -76,8 +73,8 @@ identity is part of the room's name, so a room cannot be re-homed or
 co-owned without becoming a different room.
 
 So this note proposes nothing about ordering. The hub's order stays the
-only order. What is missing is a way to **learn the hub's order after
-being absent from it**.
+only order. What is missing is a way to learn the hub's order after
+being absent from it.
 
 ## 3. A scalar sequence, not a vector clock
 
@@ -91,8 +88,7 @@ the authority, so the question is "who holds 400 to 450", not "how do
 these histories merge". Availability is per origin; order is not.
 
 This is the one place where the meshIRCd comparison is actively
-misleading, and the note says so plainly so that the next reader does
-not reintroduce it.
+misleading.
 
 ## 4. The sequence
 
@@ -105,7 +101,7 @@ covers many application messages; a sequence numbers every fanout,
 handshake and application alike, because a follower that missed a
 handshake needs it as much as a message.
 
-**Where it goes is the one wire question in this note.** Three readings:
+Where it goes is the one wire question in this note. Three readings:
 
 1. **A new field in `FanoutMessage`.** Plainest to read, and a wire
    change to a struct other implementations already parse. Weigh against
@@ -118,17 +114,14 @@ handshake needs it as much as a message.
    deniable, least legible.
 
 **Decided by Mark, 2026-11-22 (decision mimid-1wgh.104): (2), beside the
-message.** It keeps a parsed structure stable, so an implementation that
-does not know the sequence is unaffected and a proxy cannot strip it
-without the receiver noticing its absence. And it models the number
+message.** It keeps a parsed structure stable, and it models the number
 correctly: the sequence is a property of the *delivery*, not of the
 message. The same `MLSMessage` fanned out to five followers is one
 message at one sequence, and if it were ever re-sent the sequence would
 be the thing that said so.
 
 **An HTTP header, `mimi-fanout-sequence`** (bead mimid-1wgh.37.104.1).
-The note left this turning on whether franking has to cover the
-sequence, and that question dissolves: the frank is inside
+Franking does not reach it either way: the frank is inside
 `FanoutMessage`, and reading (2) puts the sequence outside it, so
 neither a header nor a wrapper is franked. What can cover it is the RFC
 9421 signature mimid already puts on every peer request, and a header
@@ -151,8 +144,8 @@ fanout.
 
 ## 5. The catch-up primitive
 
-A new provider operation, **discovered through the directory** (§5.1's
-URI templates, which mimid serves from `directory.rs`):
+A new provider operation, discovered through the directory (§5.1's URI
+templates, which mimid serves from `directory.rs`):
 
 ```
 "catchUp": "https://mimi.example.com/v1/catchUp/{roomId}"
@@ -161,7 +154,7 @@ URI templates, which mimid serves from `directory.rs`):
 Discovery through the directory is what makes this safe to add: a
 provider that does not publish the template does not support it, a
 requester learns that without a failed request, and nothing needs a
-version negotiation. That mechanism already exists and is already how
+version negotiation. That mechanism exists already, and is how
 `reportAbuse` and `proxyDownload` were added.
 
 The request says what the follower holds and how much it will take:
@@ -181,13 +174,12 @@ A hub keeps fanout for a bounded window (§6). If `from` is older than
 the window, the hub MUST say so distinctly rather than returning the
 oldest it still has, which would look like a complete answer and hide
 the loss. The follower then knows it has an unfillable gap and must
-surface it: silent loss is the thing this note exists to remove.
+surface it.
 
 mimid already has this shape internally. Its change feed answers
 `TooOld` when a consumer has fallen behind the log, and its front ends
 redraw rather than pretend (`mimid-agent-store`'s `feed`, and
-`MIMI_EV_RESYNC` in purple-mimi). The same honesty is owed across
-providers.
+`MIMI_EV_RESYNC` in purple-mimi).
 
 This one is a MUST where §8's bound is a SHOULD, and by §8.1's own test:
 a follower behaves differently depending on the answer -- it surfaces a
@@ -215,23 +207,22 @@ of the hub. Mark promoted this on 2026-11-22 from a parked idea to a
 design item of its own: bead mimid-1wgh.37.105, blocked on this note's
 work landing first.
 
-What promoted it is the resilience argument, which is stronger than the
-load-spreading one. A hub outage stops the room accepting *new*
-messages, necessarily: the hub is the only writer and its identity is in
-the roomId. But *reading* backlog needs the hub only because the hub is
-the only place to read from. Today an outage takes both; it need not.
+The resilience argument is stronger than the load-spreading one. A hub
+outage stops the room accepting *new* messages, necessarily: the hub is
+the only writer and its identity is in the roomId. But *reading* backlog
+needs the hub only because the hub is the only place to read from. Today
+an outage takes both; it need not.
 
 It is also where a vector clock earns its place. §3's conclusion — that
-the room's order wants a scalar sequence — holds and is not reopened.
-But once several followers hold overlapping *pieces* of one hub-ordered
-stream, "who holds 400 to 450" is a per-origin holdings question, and a
-vector clock or an interval set is the right shape for it. The sequence
-stays the authority on order; the clock describes availability.
+the room's order wants a scalar sequence — holds. But once several
+followers hold overlapping *pieces* of one hub-ordered stream, "who
+holds 400 to 450" is a per-origin holdings question, and a vector clock
+or an interval set is the right shape for it.
 
 ### 7.1 The piece this design does not have
 
 A receiver taking bytes from a peer instead of the hub has to verify
-both the message and **its position**. Franking covers hub acceptance
+both the message and its position. Franking covers hub acceptance
 where it applies, but nothing here binds a sequence to a message in a
 way a third party can check, so a relaying peer could renumber, reorder
 or quietly omit.
@@ -258,10 +249,10 @@ asking a third party, and amplification abuse are the remaining ones.
 
 Who is asking is authenticated by the provider authentication that
 already exists (RFC 9421 request signatures, PKIX or DANE client
-certificates; epic mimid-75nk). What they may be given is this section.
+certificates; epic mimid-75nk).
 
-**The hub SHOULD bound the answer by the requester's own participation
-window.** A provider:
+The hub SHOULD bound the answer by the requester's own participation
+window. A provider:
 
 - may receive fanout from the sequences during which it had a
   participant in the room;
@@ -270,9 +261,7 @@ window.** A provider:
 
 ### 8.1 Why SHOULD and not MUST
 
-Mark's call, 2026-11-22 (decision mimid-1wgh.107), and it corrects an
-earlier draft of this note that made it a MUST and called a loose bound
-"a worse hole than the one being fixed". That overstated it.
+Mark's call, 2026-11-22 (decision mimid-1wgh.107).
 
 A provider is not a member of the MLS group. It holds no group keys and
 never decrypts application content; only its users' clients do. Fanout
@@ -290,8 +279,7 @@ requirement, not an interoperability one, and the keyword should say so.
 
 ### 8.2 What a loose bound does leak
 
-Worth stating, because "it is only efficiency" is true of the content
-and not of everything:
+"It is only efficiency" is true of the content and not of everything:
 
 - that fanouts occurred, when, and how large they were;
 - whatever handshake messages carry outside the ciphertext. An MLS
@@ -299,8 +287,8 @@ and not of everything:
   membership changes in periods the requester was absent for would be
   readable.
 
-So the SHOULD is worth following, and mimid follows it. It is simply not
-a thing to fail a peer over.
+So the SHOULD is worth following, and mimid follows it. It is not a
+thing to fail a peer over.
 
 ### 8.3 The state it needs
 
@@ -308,17 +296,15 @@ A hub bounding the window has to know, per room and per provider, the
 sequence ranges during which that provider was represented. mimid's hub
 already tracks the participant list and the Commits that changed it;
 what it does not keep is the mapping from those changes to sequences.
-That is the main new state this design needs, and it is the part to
-design carefully before writing code.
+That mapping is the main new state this design needs.
 
-**mimid keeps the fanouts themselves, per destination, and reads the
-bound off them** (table `room_fanout`). A provider is a destination of a
+mimid keeps the fanouts themselves, per destination, and reads the
+bound off them (table `room_fanout`). A provider is a destination of a
 fanout exactly when it had a member in the room, so a row exists for a
 (sequence, domain) exactly when that provider was sent that fanout.
 Nothing separate records who was in the room when.
 
-Two things follow, and both are why this beats mapping the membership
-changes:
+Why this beats mapping the membership changes:
 
 - The bound and the deliveries cannot disagree, because they are the
   same rows. Catch-up can never serve a provider a sequence it was not
@@ -328,15 +314,14 @@ changes:
 - A gap is an absent row, so a provider that left and rejoined is served
   neither the gap nor anything from it, exactly rather than in summary.
 
-mimid first kept a separate table of participation *runs*
-(`room_provider_range`, bead mimid-1wgh.37.104.2) and dropped it once
-the fanout rows existed. It bought one thing: because it had no
-retention, it could still say "you were here for 100 to 200 and I hold
-from 500" for a provider whose fanouts are all pruned, where the rows
-can only say "you have nothing here". Both are refusals, so §5.1's MUST
-holds either way. Against that it grew a row per provider per membership
-run for the life of the room with nothing ever deleting it, which is the
-worse of the two problems for a bound this section makes a SHOULD.
+The alternative is a separate table of participation *runs*
+(`room_provider_range`, bead mimid-1wgh.37.104.2). It buys one thing:
+having no retention, it can still say "you were here for 100 to 200 and
+I hold from 500" for a provider whose fanouts are all pruned, where the
+rows can only say "you have nothing here". Both are refusals, so §5.1's
+MUST holds either way. Against that it grows a row per provider per
+membership run for the life of the room with nothing ever deleting it,
+the worse of the two problems for a bound this section makes a SHOULD.
 
 ## 9. Privacy
 
@@ -346,8 +331,8 @@ already, since it fans out to that provider, but the draft should say it
 rather than leave an implementer to notice.
 
 It also gives a hub a way to distinguish "this provider has no users
-interested" from "this provider was down", which it could not cleanly
-tell before.
+interested" from "this provider was down", which it could not tell
+before.
 
 ## 10. What mimid implements
 
@@ -398,9 +383,7 @@ All answered 2026-11-22. Each is a closed decision bead.
    needs Mark's own OK, as every upstream post does.
 3. ~~Timing against the January 2027 interop day with Haven.~~
    **Decided 2026-11-22: implement now, fully live** (decision
-   mimid-1wgh.106). This question was first put with a false premise --
-   that catch-up was new surface six weeks out competing with
-   interop-day scope. Bead mimid-1wgh.46.20 says "mimid needs no new
+   mimid-1wgh.106). Bead mimid-1wgh.46.20 says "mimid needs no new
    features" for that day, and its date is not set, being gated on
    Haven's own prerequisites. So the trade was only regression risk in
    the fanout write path, which §10's two-provider test covers, and a
@@ -410,16 +393,15 @@ All answered 2026-11-22. Each is a closed decision bead.
    Because it is live from the first deploy, the endpoint is
    peer-reachable untrusted input from the start: provider
    authentication (epic mimid-75nk), strict decoding, named limits.
-   §8's participation window is a SHOULD and mimid follows it, but it is
-   an efficiency bound, not a conformance point.
+   §8's participation window stays a SHOULD: an efficiency bound, not a
+   conformance point.
 4. ~~§7: whether follower-to-follower gap filling is interesting enough
    to keep in view.~~ **Decided 2026-11-22: promoted to a design item of
    its own**, bead mimid-1wgh.37.105, on the strength of the hub-outage
-   resilience argument. §7 is rewritten accordingly, and it surfaced one
-   thing this note should settle now rather than later: whether the hub
+   resilience argument. §7 states the result, and it surfaced one thing
+   this note should settle now rather than later: whether the hub
    signs a hash-chain entry alongside the sequence (§7.1), without which
    a peer-served fanout's position cannot be verified.
 
-The header-versus-wrapper choice that was open here is settled in §4:
-an HTTP header, `mimi-fanout-sequence`, covered by the RFC 9421
-signature.
+The header-versus-wrapper choice is settled in §4: an HTTP header,
+`mimi-fanout-sequence`, covered by the RFC 9421 signature.

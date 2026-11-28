@@ -177,11 +177,11 @@ component. A non-admin may only update its own leaf, SelfRemove, or
 external commit. If every admin loses their keys, the group's settings
 and membership are frozen for good; the members make a new group.
 
-**Metadata exposed to relays**, in summary: the account behind every
-KeyPackage and relay list; that an account received gift wraps; per
-group, a stable random id, the timing and sizes of its traffic, and
-which relays it uses. Not the members, not the sender of a group
-message, not the group's size except by traffic volume. A relay can
+**Metadata exposed to relays**: the account behind every KeyPackage
+and relay list; that an account received gift wraps; per group, a
+stable random id, the timing and sizes of its traffic, and which
+relays it uses. Not the members, not the sender of a group message,
+not the group's size except by traffic volume. A relay can
 still drop or withhold events, and a group whose relays all refuse a
 Commit has no way out except a new group
 (`app-components/nostr-routing-v1.md`, "Validation").
@@ -218,11 +218,11 @@ rule (`protocol-core/convergence.md`):
    existed only on the loser, including its own Commit that it had
    already applied. Each client keeps old epoch states for this.
 
-The guarantee is stated carefully: clients that see the same inputs
-pick the same branch, and if inputs stop arriving and everyone keeps
-running they end in the same state. There is no global finality;
-"Settled" is local. MDK has a convergence simulator and formal models
-(`formal/`, `crates/cgka-conformance-simulator`), which I did not read.
+The guarantee: clients that see the same inputs pick the same branch,
+and if inputs stop arriving and everyone keeps running they end in the
+same state. There is no global finality; "Settled" is local. MDK has a
+convergence simulator and formal models (`formal/`,
+`crates/cgka-conformance-simulator`), which I did not read.
 
 ### 2.2 MIMI: the hub orders
 
@@ -241,14 +241,13 @@ Agora (agora-spec `spec/05-messaging.md` §5.1.1) sits between them: a
 Space may name a sequencer that stamps Commits into a log, which then
 decides like a hub; without one, members take the Commit with the
 lowest envelope id among those seen within 5 s, which can split the
-group. Of the three, only Marmot's rule excludes transport
-metadata from the tie-break.
+group.
 
 ### 2.3 Can a MIMI room and a Marmot group be one MLS group?
 
-No, not without changing one of the two specs. The cryptography is not
-the obstacle: both use RFC 9420, ciphersuite 1, OpenMLS, and the same
-mls-extensions code points. The rules around it conflict:
+No, not without changing one of the two specs. Both use RFC 9420,
+ciphersuite 1, OpenMLS, and the same mls-extensions code points; the
+rules around the cryptography conflict:
 
 - **Credentials.** A Marmot client rejects any leaf whose credential
   identity is not a 32-byte secp256k1 key with a valid 0x8009 proof
@@ -328,10 +327,10 @@ Sizes are rough and compare with what exists: mimid-agent-irc is about
 **What.** A third front end over `mimid-agent-store`, next to JMAP and
 IRC: the agent runs a loopback Nostr relay (NIP-01 WebSocket, NIP-11
 info document, NIP-42 AUTH) and shows each of the user's MIMI rooms as
-a NIP-29 relay-based group. NIP-29 fits well: there a relay owns the
-group, checks who may post, orders it, and signs the group's metadata
-(kinds 39000 to 39003), which is what the agent does for its own view
-of a MIMI room.
+a NIP-29 relay-based group. In NIP-29 a relay owns the group, checks
+who may post, orders it, and signs the group's metadata (kinds 39000
+to 39003), which is what the agent does for its own view of a MIMI
+room.
 
 **What it takes.**
 
@@ -365,9 +364,9 @@ Which NIP-29 clients handle a private loopback relay well I did not
 check (Chachi, Flotilla and 0xchat are said to support NIP-29;
 unverified).
 
-**Value.** Low to medium. It is a client choice for people who already
-use a Nostr client, like IRC is for people who use IRC. It connects
-mimid to no Nostr user.
+**Value.** Low to medium. A client choice for people who already use a
+Nostr client, as the IRC front end is for people who use IRC. It
+connects mimid to no Nostr user.
 
 ### (b) A MIMI room to Marmot group bridge in the agent
 
@@ -403,16 +402,15 @@ groups, two orderings; nothing crosses at the MLS level.
   author has to go in the content: a line prefix, or a field. Marmot
   checks that inner `pubkey` equals the MLS sender, so the bridge
   cannot post as anyone else. mimi-content has no "on behalf of" field
-  (N7). Simple, and honest about who holds plaintext.
+  (N7).
 - *Puppet mode (one identity per remote user).* The bridge makes a
   Nostr key per MIMI user and a MIMI user URI per npub (mimid-server
   can host those, say `mimi://a.example/u/npub1...`), each with its own
   leaf. Each puppet's leaf proof (0x8009) is honest, since the bridge
   does hold the key, but users on each side see a person who is not
   there. In Marmot every puppet add needs an admin; in MIMI it depends
-  on room policy and consent. Groups grow by one leaf per remote user.
-  More work (key and leaf management for every puppet), and a step
-  further from what members think they see.
+  on room policy and consent. Groups grow by one leaf per remote user,
+  and the bridge manages a key and a leaf for each.
 
 Relay mode is built first; puppet mode is designed alongside it, so
 the relay code does not have to be rewritten for it (decision 12,
@@ -512,8 +510,7 @@ account key, so a relay knows every Marmot user that publishes there.
 Agora keeps KeyPackages off relays entirely (agora-spec §2.5.4, step
 6). A MIMI provider is not blind and does not try to be: the hub
 enforces policy on user URIs, so it must see them (A9 in
-air-api-comparison.md). Putting relays under MIMI would add a blind
-hop to a protocol whose ends are not blind.
+air-api-comparison.md).
 
 **Value.** Low. MIMI providers are servers that are online, and the
 hub already retries fanout. If mimid ever needs push, the provider
@@ -531,25 +528,25 @@ against the provider. Small: a few hundred lines in mimid-server and
 a configuration table. Useful mainly as a lookup for the bridge
 ("which npub is alice?").
 
-**Nostr keys in MLS credentials.** Marmot's 0x8009 proof is a good
-pattern: a key the user holds signs a statement naming the leaf's MLS
-signature key, and every member checks it. mimid could accept a
-LeafNode component of the same form beside a BasicCredential that
-still holds the MIMI URI: "the holder of npub X authorizes this leaf
-for `mimi://a.example/u/alice`". Members would pin the npub on first
+**Nostr keys in MLS credentials.** In Marmot's 0x8009 proof a key the
+user holds signs a statement naming the leaf's MLS signature key, and
+every member checks it. mimid could accept a LeafNode component of the
+same form beside a BasicCredential that still holds the MIMI URI: "the
+holder of npub X authorizes this leaf for `mimi://a.example/u/alice`".
+Members would pin the npub on first
 sight and flag a change, as mimid already does for did:webvh DIDs
 (README, "Known weaknesses"). Medium: 1,000 to 2,000 lines, a
 component in the private range.
 
-**Against did:webvh.** did:webvh is the stronger identity: its log has
-key rotation, pre-rotation and an audit trail, and a device can be
-revoked by the user. A Nostr key cannot rotate. If the key leaks the
-identity is lost, and there is no adopted NIP for migrating to a new
-key. What a Nostr key has is reach: many people already have one, and
-Marmot users are identified by nothing else. So: did:webvh stays the
-primary user-held identity; a Nostr key proof is worth adding only
-together with the bridge, so a MIMI user can say "I am also npub X"
-and the bridge can map them. Not on its own.
+**Against did:webvh.** did:webvh's log has key rotation, pre-rotation
+and an audit trail, and a device can be revoked by the user. A Nostr
+key cannot rotate: if it leaks the identity is lost, and there is no
+adopted NIP for migrating to a new key. What a Nostr key has is reach,
+since many people already have one and Marmot users are identified by
+nothing else. did:webvh stays the primary user-held identity; a Nostr
+key proof is worth adding only together with the bridge, so a MIMI
+user can say "I am also npub X" and the bridge can map them. Not on
+its own.
 
 ## 5. Findings for the drafts
 
@@ -648,8 +645,8 @@ next to did:webvh.
 
 **Gap.** A Marmot joiner rejects a Welcome unless the GroupInfo signer
 is an admin in the joined state (`app-components/admin-policy-v1.md`,
-`protocol-core/joining.md`). Marmot also says plainly that this check
-is weak, because a forked group's state is written by its author
+`protocol-core/joining.md`). Marmot also says that this check is weak,
+because a forked group's state is written by its author
 ("Welcome-bootstrap trust"). In MIMI the hub checks the add against
 room policy and the joiner trusts the hub; the draft's consent records
 cover whether the user wanted to be reachable, not whether the adder
@@ -672,8 +669,7 @@ and nothing for history.
 
 **Proposed text.** None now. Copying history between a user's devices
 is a client matter that could ride on the self-group idea in Air and
-Agora as well. Worth a bead when multi-device work resumes; Marmot's
-documents are unusually detailed.
+Agora as well. Worth a bead when multi-device work resumes.
 
 ### N7. mimi-content cannot say "sent on behalf of"
 
@@ -730,24 +726,21 @@ here; the first two are room-policy questions.
 
 ## 6. Recommendation
 
-Build (b), the bridge, first, in relay mode, by driving MDK's
-`wn-agent` over its control socket rather than linking MDK: it is the
-only option that lets MIMI users and White Noise users talk, it costs
-about one front end's worth of code, and it keeps OpenMLS versions and
-Marmot's convergence rules in the code that already implements them.
-Do the NIP-05 lookup from (d) as part of it, since the bridge needs a
-way to name npubs, and leave the Nostr-key leaf proof until a user asks
-to be the same person on both sides. Skip (a) unless someone wants a
-Nostr client as a UI, and skip (c). Take N2 and N3 to the draft, and
-N1 to #mimi, independently of any of this.
+Build (b), the bridge, first, in relay mode, driving MDK's `wn-agent`
+over its control socket rather than linking MDK, which leaves the two
+OpenMLS versions and Marmot's convergence rules in the code that
+already implements them. Do the NIP-05 lookup from (d) as part of it,
+since the bridge needs a way to name npubs, and leave the Nostr-key
+leaf proof until a user asks to be the same person on both sides. Skip
+(a) unless someone wants a Nostr client as a UI, and skip (c). Take N2
+and N3 to the draft, and N1 to #mimi, independently of any of this.
 
 ## 7. Uncertainties
 
 - The NIP-29 client landscape in option (a) is from memory, not
   checked.
-- wn-agent's control API was read from its client guide and one
-  source file here; it was traced in full afterwards, in
-  marmot-bridge.md §0.
+- wn-agent's control API is described here from its client guide and
+  one source file; the full trace is in marmot-bridge.md §0.
 - mls-extensions -10 against -11 was not compared for wire changes
   that would matter to a mixed implementation.
 - MDK's formal models and simulator were not read; §2.1 is from the

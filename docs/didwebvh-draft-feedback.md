@@ -42,9 +42,9 @@ INVENTED, NOT FROM SPEC in the code. Decision mimid-1wgh.4.81.8.
 
 **For -01:** write the arm as `opaque did_webvh<V>;` whose content is a
 `DIDWebVHCredential`, or say in prose that the structure is carried inside an
-`opaque<V>`. Consider a sentence noting that new credential types need this
-shape to be carried by existing stacks. This also bears on the encoding
-question (item 7 of Open Issues; see below).
+`opaque<V>`, and say that a new credential type needs this shape to be carried
+by existing stacks. The encoding question (item 7 of Open Issues) turns on the
+same point.
 
 ## Log verification and the profile
 
@@ -55,9 +55,8 @@ with no blank lines and nothing after the last LF".
 
 In the DIF did:webvh test suite (commit 703f97f), the logs written by the
 dart and java implementations have no final LF. Python, Rust, TypeScript and
-java-eecc conform. Under -00, the logs those two
-implementations contribute to that suite are invalid as credentials,
-although they are valid did:webvh.
+java-eecc conform. Under -00 the logs those two implementations contribute are
+invalid as credentials, though they are valid did:webvh.
 
 **mimid:** refuses them, as written. Decision mimid-1wgh.4.81.11.
 
@@ -157,9 +156,11 @@ on validation".
 The DIF negative scenario `negative-versiontime-future` (entries at
 2000-01-01, 9999-06-15, 2000-01-03) is rejected by a v1.0 resolver at entry 2
 for being in the future. Under change 3 mimid rejects it at entry 3 instead,
-for going backwards. Worth a sentence in -01 that change 3 can change *where*
-a log fails, not only whether, and that a log valid under change 3 may be
-refused by every ordinary resolver.
+for going backwards.
+
+**For -01:** say that change 3 can change *where* a log fails, not only
+whether, and that a log valid under change 3 may be refused by every ordinary
+resolver.
 
 ### 9. Authorized keys: three gaps
 
@@ -286,8 +287,8 @@ not, it accepts Commits that every member refuses, and those members fall out
 of sync with the hub's order.
 
 **mimid:** the hub's Observer enforces the same rules once told the code
-points (`Observer::enforce_did_webvh`); tests show it refusing each rule-
-breaking Commit the members refuse.
+points (`Observer::enforce_did_webvh`); tests show it refusing each
+rule-breaking Commit the members refuse.
 
 **For -01:** say that a DS or hub that validates Commits MUST (or SHOULD)
 apply §Group Consistency Rules, and that it can, without any secret.
@@ -305,9 +306,9 @@ Commits for joins.
 
 **For -01:** mention the MIMI consequence under Open Issue 1.
 
-**Status:** closed by the component form (item 29). An external Commit carries the AppDataUpdate
-that sets the joiner's entry (decision mimid-1wgh.4.81.33), which departs
-from §Rules as written.
+**Status:** closed by the component form (item 29). An external Commit carries
+the AppDataUpdate that sets the joiner's entry (decision mimid-1wgh.4.81.33),
+which departs from §Rules as written.
 
 ### 18. Open Issue 5 is real in practice
 
@@ -321,9 +322,9 @@ proposal from someone else.
 **mimid:** refuses a record-changing Commit while a GCE proposal is pending
 (decision mimid-1wgh.4.81.17).
 
-**Status:** closed by the component form (item 29). A record change is AppDataUpdate proposals,
-which a Commit holds next to another party's GroupContextExtensions proposal;
-`PendingGroupContextExtensions` is gone.
+**Status:** closed by the component form (item 29). A record change is
+AppDataUpdate proposals, which a Commit holds next to another party's
+GroupContextExtensions proposal; `PendingGroupContextExtensions` is gone.
 
 ### 19. The record change is mechanical; say who adds it
 
@@ -331,25 +332,27 @@ The draft says a Commit that changes the expected value MUST include the GCE
 proposal, and a Commit that raises a head MUST remove the leaves it no longer
 authorizes. Both are fully determined by the resulting tree. mimid's
 `Member::commit` computes them and adds them itself, so revocation is "give the
-device the new log, then commit". The draft could say an implementation MAY do
-this, so that applications do not each re-derive it.
+device the new log, then commit".
+
+**For -01:** say that an implementation MAY compute and add both, so that
+applications do not each re-derive them.
 
 ### 20. Revocation through another device works as described
 
 §Rules' path for revoking the committing device ("committing an Update
 proposal, sent by one of the user's other devices, that carries the new log")
 works over OpenMLS unchanged: mimid tests have d2 propose an Update with a log
-that drops d1, and Bob's Commit removes d1. No change needed; noted as
-confirmation.
+that drops d1, and Bob's Commit removes d1. No change needed.
 
 ### 21. Size
 
 Each leaf carries the whole log, so KeyPackages and the ratchet tree grow with
 every device change. MIMI servers bound request sizes; a 2 MiB leaf limit is
-far above what most deployments will accept for a KeyPackage. Worth a sentence
-that deployments will set lower operational limits, and that a member must
-still accept up to the draft's limits to stay deterministic (or the draft
-picks a smaller limit).
+far above what most deployments will accept for a KeyPackage.
+
+**For -01:** say that deployments will set lower operational limits and that a
+member must still accept up to the draft's limits to stay deterministic, or
+pick a smaller limit.
 
 ## Using it in MIMI (mimid-server and mimid-agent)
 
@@ -400,20 +403,20 @@ build or accept it.
 carries when it writes `required_capabilities`, and its hub accepts such a
 listing as part of a record change (decision mimid-1wgh.4.81.22).
 
-**For -01:** a sentence that the `required_capabilities` the proposal sets may
-need to list other extensions the group carries, so implementations do not
-read "lists `did_webvh_heads` and `did_webvh`" as "lists only those".
+**For -01:** say that the `required_capabilities` the proposal sets may need to
+list other extensions the group carries, so implementations do not read "lists
+`did_webvh_heads` and `did_webvh`" as "lists only those".
 
-**Status:** closed by the component form (item 29). No GroupContextExtensions proposal and no
-`required_capabilities` are written for the record, so the workaround is
-gone. (OpenMLS's stricter check still applies to any GroupContextExtensions
-proposal, which mimid's hub refuses anyway.)
+**Status:** closed by the component form (item 29). No GroupContextExtensions
+proposal and no `required_capabilities` are written for the record, so the
+workaround is gone. (OpenMLS's stricter check still applies to any
+GroupContextExtensions proposal, which mimid's hub refuses anyway.)
 
 ### 24. A hub that refuses GroupContextExtensions proposals
 
 A MIMI hub has reason to refuse GroupContextExtensions proposals in
 general: one could drop the hub from `external_senders` or change
-`required_capabilities` to lock members out. mimid's hub refused them all.
+`required_capabilities` to lock members out, so mimid's hub refused them all.
 The draft makes one mandatory in every Commit that adds a new user or
 carries a newer log, so a hub must recognize the record change and let it
 through, while still refusing anything else in the same proposal.
@@ -451,9 +454,9 @@ enforces the rules can compute the set; one that does not cannot.
 authorization (for MIMI, room policy) must allow a user's device to remove
 another device of the same user, or must treat the Removes the rules require
 as authorized by the record change itself. The second reading needs the
-authorizer to enforce the rules; the draft could say which Removes are
-"required" in a form an authorizer can check (same SCID as the committer,
-key not in the new record).
+authorizer to enforce the rules, so say which Removes are "required" in a form
+an authorizer can check (same SCID as the committer, key not in the new
+record).
 
 ### 26. Every member's provider must already support the draft
 
@@ -503,7 +506,7 @@ the user and extends the current log before committing it.
 
 Where the Commit cannot be built, the agent sends the credential as an
 Update proposal for another member to commit, as §Rules suggests for a
-revoked committer. Implementing it showed two limits:
+revoked committer. The fallback has two limits:
 
 - With Open Issue 5's cause (a GroupContextExtensions proposal from
   another party pending), the other member is in the same position: its
@@ -539,10 +542,10 @@ changed by AppDataUpdate proposals (mls-extensions-11 §4.6, §4.7), with the
 group rules unchanged (spike bead mimid-1wgh.4.81.32, decision
 mimid-1wgh.4.81.33, `docs/didwebvh-appdata-spike.md`).
 
-**mimid:** first behind a code-point switch; since bead mimid-1wgh.4.81.34
-(Mark, 2026-11-18) the component is the only form, with the private-use
-component ID 0xF013 as a configurable default (decision mimid-1wgh.4.81.35).
-With the component, a revocation Commit and the Update-proposal
+**mimid:** since bead mimid-1wgh.4.81.34 (Mark, 2026-11-18) the component is
+the only form, with the private-use component ID 0xF013 as a configurable
+default (decision mimid-1wgh.4.81.35). With the component, a revocation Commit
+and the Update-proposal
 fallback both succeed with another party's GroupContextExtensions proposal
 pending; two record changes (a device's by reference and the committer's)
 combine in one Commit; a device whose log is newer than the record joins by
@@ -571,14 +574,14 @@ identity." All of a user's devices share the SCID. mls-rs indexes members
 by an identity its `IdentityProvider` returns and refuses a second leaf
 with the same one (`DuplicateLeafData`). An mls-rs application that takes
 the sentence literally and returns the SCID cannot have two devices of one
-user in a group, which is the very case the credential is for. With the SCID
-plus the leaf's `signature_key`, both devices join, and mls-rs and mimid
+user in a group, the case the credential exists for. With the SCID plus the
+leaf's `signature_key`, both devices join, and mls-rs and mimid
 agree on every epoch (test
 `an_identity_provider_keyed_by_scid_alone_refuses_the_second_device` and
 the tests after it).
 
-**mimid:** the SCID names the user (§Reference Identifiers);
-OpenMLS has no per-leaf identity index.
+**mimid:** the SCID names the user (§Reference Identifiers); OpenMLS has no
+per-leaf identity index.
 
 **For -01:** say that the SCID identifies the user (the presented
 identifier of §Reference Identifiers) and that a member is a device, so
@@ -620,16 +623,16 @@ component also lists the AppDataUpdate proposal type, and in
 `required_capabilities` so that a member without it cannot be added. Say
 in Security Considerations that a member that cannot process AppDataUpdate
 delays a revocation until it is removed, and that a Commit changing the
-record may remove such members (what mimid does). The extension form (GCE) would let
-RFC 9420-only stacks change the record, but it brings back items 18, 24 and
-28. The better fix is AppDataUpdate in the MLS libraries.
+record may remove such members (what mimid does). The extension form (GCE)
+would let RFC 9420-only stacks change the record, but it brings back items 18,
+24 and 28. The better fix is AppDataUpdate in the MLS libraries.
 
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":
 
-1. **The mechanism is independent of the encoding, and the code shows it.**
-   The group rules (`crates/mls-didwebvh/src/rules.rs`, about 200 lines of
+1. **The mechanism is independent of the encoding.** The group rules
+   (`crates/mls-didwebvh/src/rules.rs`, about 200 lines of
    code, plus the `did_webvh_heads` codec, about 150) use exactly four things
    from a credential: the SCID, the ordered list of version identifiers, the
    set of 32-byte keys the head authorizes, and the prefix relation between two
@@ -669,8 +672,8 @@ What implementing -00 taught about "Encoding without DIDs":
    log format, the credential must be carried as one `opaque<V>` to work with
    existing MLS stacks.
 
-6. **A possible way to put the question to the WG:** define the group
-   mechanism against an abstract "verified log" (SCID, version identifiers,
+6. **Putting the question to the WG:** define the group mechanism against
+   an abstract "verified log" (SCID, version identifiers,
    authorized keys per version, prefix), as mimid's code does, and treat the
    encoding as a separable choice: did:webvh with a strict profile now
    (implementations exist), or a TLS-PL log (determinism by construction),
