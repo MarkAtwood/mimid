@@ -47,7 +47,8 @@
 //!   (mimi-content-10 Appendix B.2) are received, not sent.
 //! - Each method locks the agent for its own calls only; a front end that
 //!   needs several in a row ([`Store::change_members`]) gets them under
-//!   one lock.
+//!   one lock, as [`Store::open_direct`] holds it over its look for the
+//!   room and the hosting of a new one.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -365,16 +366,25 @@ impl Store {
         name: &str,
         invite: &[String],
     ) -> Result<Room, ActionError> {
-        self.host(key, &HostOptions::named(name), invite).await
+        let mut agent = self.agent.lock().await;
+        self.host(&mut agent, key, &HostOptions::named(name), invite)
+            .await
     }
 
-    /// [`Store::create_room`] with `options`.
+    /// [`Store::create_room`] with `options`, under the caller's lock of
+    /// the agent.
     ///
-    /// The span opens before the agent is taken, as
-    /// [`Store::sync`]'s does, so a room that waited for a sync shows the
-    /// wait here. It is the hop a first private message spends most of
-    /// itself in: the MLS group, the first Commit, the Welcome and the
-    /// transactions they commit (bead mimid-604m.2).
+    /// The agent is the caller's because [`Store::open_direct`] looks for
+    /// the room and hosts one under the same lock (bead mimid-604m.8), so
+    /// the wait for the agent is in the caller's span, not this one. It
+    /// is the hop a first private message spends most of itself in: the
+    /// MLS group, the first Commit, the Welcome and the transactions they
+    /// commit (bead mimid-604m.2).
+    ///
+    /// The agent stays held over `host_room` and every `invite`:
+    /// [`Store::sync`]'s `reconcile_rooms` makes a record for every room
+    /// the agent is in that has none, so a window here would give this
+    /// room two records.
     #[tracing::instrument(
         level = "debug",
         name = "store_host_room",
@@ -387,11 +397,11 @@ impl Store {
     )]
     async fn host(
         &self,
+        agent: &mut mimid_agent_core::Agent,
         key: Key,
         options: &HostOptions,
         invite: &[String],
     ) -> Result<Room, ActionError> {
-        let mut agent = self.agent.lock().await;
         let uri = agent.host_room(options).await?;
         tracing::Span::current().record("room", uri.as_str());
         for user in invite {
@@ -411,7 +421,7 @@ impl Store {
             }
         }
         let participants = agent.participants(&uri).unwrap_or_default();
-        let roles = RoomRoles::of(&agent, &uri);
+        let roles = RoomRoles::of(agent, &uri);
         let direct = agent.is_direct(&uri).unwrap_or(false);
         let parent = agent.parent_room(&uri).unwrap_or_default();
         let room = Room {
@@ -519,8 +529,10 @@ impl Store {
             }
             None => in_parent.iter().map(|user| (*user).to_owned()).collect(),
         };
+        let mut agent = self.agent.lock().await;
         let call = self
             .host(
+                &mut agent,
                 key,
                 &HostOptions::child_of(parent_room.uri.clone(), String::new()),
                 &invite,
@@ -648,33 +660,67 @@ impl Store {
     /// A one-to-one room with `user` hidden here ([`Store::hide_room`])
     /// is that room: it comes back as a new record, empty, and is not
     /// new.
+    ///
+    /// The agent is taken once, before the look for the room, and held
+    /// until a new one is hosted and recorded (bead mimid-604m.8). A
+    /// [`Store::sync`] joins a room from its Welcome and records it under
+    /// that same lock, so between a look that found nothing and the
+    /// hosting there would otherwise be a window in which the other side
+    /// opening the same one-to-one room arrives: §5 allows one
+    /// fixed-membership room per set of participants, the hub refuses the
+    /// second, and the user's first message fails with their room
+    /// already there. The span opens before the agent is taken, as
+    /// [`Store::sync`]'s does, so a room that waited for a sync shows the
+    /// wait here.
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_open_direct",
+        skip_all,
+        fields(
+            user = %self.user,
+            room = tracing::field::Empty,
+            hosted = tracing::field::Empty
+        )
+    )]
     pub async fn open_direct(&self, key: Key, user: &str) -> Result<(Room, bool), ActionError> {
         if user == self.user {
             return Err(ActionError::NotDirect);
         }
+        let mut agent = self.agent.lock().await;
+        let span = tracing::Span::current();
         if let Some(found) = self.direct_room(user)
             && let Some(room) = self.state().rooms.get(&found).cloned()
         {
+            span.record("room", room.uri.as_str());
+            span.record("hosted", false);
             return Ok((room, false));
         }
-        if let Some(room) = self.reveal_direct(user).await {
+        if let Some(room) = self.reveal_direct(&agent, user) {
+            span.record("room", room.uri.as_str());
+            span.record("hosted", false);
             return Ok((room, false));
         }
         let room = self
             .host(
+                &mut agent,
                 key,
                 &HostOptions::direct(),
                 std::slice::from_ref(&user.to_owned()),
             )
             .await?;
+        span.record("room", room.uri.as_str());
+        span.record("hosted", true);
         Ok((room, true))
     }
 
     /// The one-to-one room with `user` hidden here, brought back as a new
-    /// record: one the agent is active in, direct, with `user` among its
+    /// record: one `agent` is active in, direct, with `user` among its
     /// participants. `None` if there is none.
-    async fn reveal_direct(&self, user: &str) -> Option<Room> {
-        let agent = self.agent.lock().await;
+    ///
+    /// Takes the agent its caller holds, so that the look and the
+    /// hosting that follows it are one critical section
+    /// ([`Store::open_direct`]).
+    fn reveal_direct(&self, agent: &mimid_agent_core::Agent, user: &str) -> Option<Room> {
         let hidden = self.state().hidden_rooms();
         let uri = hidden.into_iter().find(|uri| {
             agent
@@ -689,7 +735,7 @@ impl Store {
         self.state()
             .clear_room_tombstones(std::slice::from_ref(&uri));
         let mut changes = Vec::new();
-        let key = self.room_for(&agent, &uri, &mut changes)?;
+        let key = self.room_for(agent, &uri, &mut changes)?;
         self.record(changes);
         self.state().rooms.get(&key).cloned()
     }

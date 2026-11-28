@@ -646,6 +646,97 @@ async fn one_to_one_rooms_are_made_once_and_recognised() {
     assert_eq!(bob.direct_room(ALICE), Some(made.key.clone()));
 }
 
+/// Oracle: room-policy-04 §5 ("Only a single fixed-membership room can
+/// exist for any unique set of participants"); bead mimid-604m.8. A sync
+/// that records the one-to-one room while `Store::open_direct` is
+/// between its look for the room and its hosting of a new one must not
+/// leave a second room hosted for the pair: the hub refuses that room,
+/// and the user's first message fails with their room already there.
+///
+/// The interleaving is placed, not raced, and no clock is read. The test
+/// holds the agent while it starts both tasks; each says it is about to
+/// ask for the agent before it asks, the sync first. `tokio::sync::Mutex`
+/// hands the lock out in the order it was asked for, and on the
+/// current-thread runtime a task runs to its first pending await before
+/// the test is polled again, so when both messages are in, both tasks
+/// are in the queue in that order: whatever `open_direct` does without
+/// the agent, it has done, and the sync holds the agent next.
+#[tokio::test]
+async fn open_direct_does_not_host_a_second_room_over_a_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    // Never: a Welcome is staged and not joined, so the join is this
+    // test's to place.
+    let bob = Arc::new(Store::new(
+        agent(&server, BOB, dir.path()).await,
+        InvitePolicy::Never,
+    ));
+    bob.open_database().unwrap();
+    bob.agent()
+        .lock()
+        .await
+        .publish_key_packages(4)
+        .await
+        .unwrap();
+    let changes = server.changes.clone();
+
+    // alice opens the one-to-one room from her side: bob's agent joins
+    // it, and the record of it is the next sync's to make
+    // (Store::accept_invite).
+    let direct = alice.host_room(&HostOptions::direct()).await.unwrap();
+    alice.invite(&direct, BOB).await.unwrap();
+    until_store(&bob, &changes, |s| !s.state().invites.is_empty()).await;
+    let number = bob.state().invites[0].number;
+    assert_eq!(bob.accept_invite(number).await.unwrap(), direct);
+    assert!(bob.state().room_of_uri(&direct).is_none());
+    assert_eq!(bob.direct_room(ALICE), None);
+
+    let held = bob.agent().lock().await;
+    let (said_sync, syncing) = tokio::sync::oneshot::channel();
+    let sync = tokio::spawn({
+        let bob = Arc::clone(&bob);
+        async move {
+            let _ = said_sync.send(());
+            bob.sync().await.unwrap();
+        }
+    });
+    syncing.await.unwrap();
+    let (said_open, opening) = tokio::sync::oneshot::channel();
+    let open = tokio::spawn({
+        let bob = Arc::clone(&bob);
+        async move {
+            let _ = said_open.send(());
+            bob.open_direct(bob.new_key(), ALICE).await
+        }
+    });
+    opening.await.unwrap();
+    drop(held);
+    sync.await.unwrap();
+    let (room, new) = open.await.unwrap().expect("the room the sync recorded");
+
+    assert!(!new, "the room was found, not hosted again");
+    assert_eq!(room.uri, direct);
+    assert_eq!(bob.direct_room(ALICE), Some(room.key.clone()));
+    let directs: Vec<String> = bob
+        .state()
+        .rooms
+        .values()
+        .filter(|r| r.direct)
+        .map(|r| r.uri.clone())
+        .collect();
+    assert_eq!(
+        directs,
+        std::slice::from_ref(&direct),
+        "one room for the pair"
+    );
+    assert_eq!(
+        alice.participants(&direct).unwrap().len(),
+        2,
+        "nothing was added to alice's room"
+    );
+}
+
 /// The bodies of `page`.
 fn bodies(page: &mimid_agent_store::Page) -> Vec<&str> {
     page.messages.iter().map(|m| m.body.as_str()).collect()

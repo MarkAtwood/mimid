@@ -1988,7 +1988,12 @@ Added on 2026-11-20:
       `Store::set_direct` is gone. `Store::direct_room` finds the active
       one-to-one room with a user (the oldest by key if several);
       `Store::open_direct` returns it, or hosts a new one
-      (`HostOptions::direct`) and adds the user in its first Commit.
+      (`HostOptions::direct`) and adds the user in its first Commit. It
+      holds the agent from the look for the room to the hosting of a new
+      one (bead mimid-604m.8): `Store::sync` joins a room from its
+      Welcome and records it under that same lock, so a window between
+      the two would let the other side's room for the same pair arrive
+      there unseen and this host a second one, which the hub refuses.
     - **PART and destroy on a fixed room.** §5 lets a user "remove all
       its clients from the associated MLS group" but not leave the
       participant list, so §7.1's "PART leaves the room for real" cannot
@@ -2020,7 +2025,8 @@ Added on 2026-11-20:
       from the policy); version 12 (the `hiddenRoom` tombstone).
     - Tests: mimid-server `tests/hub_policy.rs` `fixed_membership_rooms`;
       mimid-agent-store `tests/groundwork.rs`
-      `one_to_one_rooms_are_made_once_and_recognised`; mimid-agent
+      `one_to_one_rooms_are_made_once_and_recognised` and
+      `open_direct_does_not_host_a_second_room_over_a_sync`; mimid-agent
       `tests/groundwork.rs` `direct_chats_over_jmap` and
       `destroying_a_direct_chat_hides_it_until_the_next_message`;
       mimid-agent-store `tests/groundwork.rs`
