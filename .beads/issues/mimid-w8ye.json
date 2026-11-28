@@ -2,13 +2,15 @@
   "id": "mimid-w8ye",
   "title": "Answer a client's PING through the agent",
   "description": "Implements decision mimid-1wgh.132. A registered session's PING is answered only after the connection task has held the agent lock, so a PONG says the agent could have taken the user's next message. Unregistered connections keep the plain answer. Touches crates/mimid-agent-irc/src/command.rs, the front end's Limitations, docs/design/agent-frontends.md 4 and docs/irc-lessons.md Keepalive.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-27T22:45:16.616483535Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-27T22:45:16.616483535Z",
+  "updated_at": "2026-11-28T00:54:31.093721128Z",
+  "closed_at": "2026-11-28T00:54:31.093721128Z",
+  "close_reason": "Commit 32c72375: the IRC PONG holds the agent lock, both EventSource pings go through the store or the agent (decision mimid-1wgh.132).",
   "dependencies": [
     {
       "issue_id": "mimid-w8ye",

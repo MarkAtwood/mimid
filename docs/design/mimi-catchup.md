@@ -232,8 +232,9 @@ stream — a chain entry over (previous, sequence, message digest) — so
 any holder can prove a message's position and no holder can hide a gap.
 That is an addition to *this* design, not only to §7's, and it is much
 cheaper to assign alongside the sequence in §4 than to retrofit once
-other implementations parse the envelope. Bead mimid-1wgh.37.104.1
-carries the question.
+other implementations parse the envelope. Bead mimid-1wgh.37.104.16
+carries the question, which is also question 2 of bead
+mimid-1wgh.37.105.
 
 ### 7.2 What still has no answer
 
@@ -339,8 +340,9 @@ before.
 Hub side:
 
 - assign and persist the per-room sequence;
-- record, per room and provider, the sequence ranges that provider was
-  entitled to (§8);
+- keep each fanout as it was delivered, per destination (table
+  `room_fanout`), and read §8's bound off those rows rather than off a
+  separate record of who was in the room when (§8.3);
 - serve `catchUp`, bounded by the retention window of §6 and the
   participation window of §8, and answer out-of-window distinctly;
 - publish the `catchUp` template in the directory.
@@ -400,8 +402,9 @@ All answered 2026-11-22. Each is a closed decision bead.
    its own**, bead mimid-1wgh.37.105, on the strength of the hub-outage
    resilience argument. §7 states the result, and it surfaced one thing
    this note should settle now rather than later: whether the hub
-   signs a hash-chain entry alongside the sequence (§7.1), without which
-   a peer-served fanout's position cannot be verified.
+   signs a hash-chain entry alongside the sequence (§7.1, bead
+   mimid-1wgh.37.104.16), without which a peer-served fanout's position
+   cannot be verified.
 
 The header-versus-wrapper choice is settled in §4: an HTTP header,
 `mimi-fanout-sequence`, covered by the RFC 9421 signature.

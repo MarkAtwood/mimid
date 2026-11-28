@@ -721,10 +721,13 @@ step runs the full check list in AGENTS.md before its commit.
      fails at their own agent (`NoConsent`), and no invite reaches the
      user at all.
    - Every line written is at most 512 octets with its tags, the stricter
-     reading of irc-lessons.md. The topic is `<name> | <room URI>`. 329
-     and 333 give the time in the room record's key (when this store
-     made the record), since the store keeps no room creation time. 004
-     lists user mode `i`; `MODE <own nick>` answers 221 `+i`.
+     reading of irc-lessons.md. The topic is `subject | name | URI`, an
+     empty subject or name left out (§7.14; `render::topic_of`). There is
+     no 329 at all, and 333 comes only with the subject's setter and the
+     hub's time of a change the agent saw (§7.15): the store keeps no
+     room creation time, and its own record's key (when this store made
+     the record) differs between members. 004 lists user mode `i`;
+     `MODE <own nick>` answers 221 `+i`.
    - An edit's msgid is the ULID of its `edited_at` and its reference
      octets, the way `senderMsgId` is made. Edits and retractions of
      messages from before the connection are shown only if made after it
@@ -919,7 +922,9 @@ step runs the full check list in AGENTS.md before its commit.
 
 Steps 3 and 5 are the large ones. Step 3 cannot be cut much smaller: the
 store has to be the only copy of inbound state before it can save it.
-Keeping format 1 on disk through step 3 is what keeps it reversible.
+Format 1 on disk kept step 3 reversible; from step 4 on there is no way
+back to it, since §7.10 leaves no format-1 reader and no `chat.json`
+(crates/mimid-agent-store/src/db.rs:24).
 
 ## 4. The IRC front end
 
@@ -931,15 +936,21 @@ small, and docs/irc-lessons.md lists exact behaviour that a library would
 hide.
 
 ```text
-src/lib.rs       IrcFrontEnd::over(store, config); # Limitations
-src/listen.rs    accept loop; loopback check
+src/lib.rs       IrcOptions, PeerIdentity, IrcError; # Limitations
+src/listen.rs    IrcFrontEnd::bind(store, options, credentials, tls) and
+                 serve(stop); the plain and the TLS listener, the accept
+                 loop, the front end's part of every save
 src/conn.rs      one task per connection: reader, writer queue, keepalive
 src/line.rs      parse and write lines; tag escaping; 512-octet splitting
 src/register.rs  CAP, PASS, NICK, USER, the burst
+src/sasl.rs      AUTHENTICATE: SASL PLAIN and SCRAM-SHA-256 (§7.25)
 src/names.rs     nick and channel assignment, ASCII casemapping
 src/command.rs   the v1 commands
+src/history.rs   draft/chathistory, served from the store (§7.33)
+src/markread.rs  draft/read-marker over the read positions (§7.34)
 src/render.rs    store records and changes to IRC lines
 src/service.rs   the `mimid` service nick
+src/webpush.rs   soju.im/webpush (§7.35)
 ```
 
 ### Loopback and authentication
@@ -955,11 +966,18 @@ src/service.rs   the `mimid` service nick
   cross-protocol trick from web pages.
 - The client presents a credential -- the agent's local token or an app
   password -- by SASL PLAIN, SASL SCRAM-SHA-256 or `PASS`, before
-  registration ends. The check is `LocalToken::matches`, constant time
-  (crates/mimid-agent/src/token.rs:99-101). A wrong or missing token gets
-  464, then `ERROR :Closing Link`, and the connection closes. Before a good
-  PASS only CAP, PASS, NICK, USER, PING and QUIT are read. A first line
-  that looks like HTTP (`GET `, `POST `) closes the connection.
+  registration ends. The check is the credential table the daemon hands
+  the front end (§7.25, docs/design/frontend-auth.md §4.1):
+  `Credentials::check_plain` for SASL PLAIN and `PASS`, one PBKDF2
+  derivation compared with every unrevoked credential's stored
+  SCRAM-SHA-256 verifier in constant time
+  (crates/mimid-agent-store/src/credentials.rs:868), and
+  `Credentials::scram_start` and `scram_finish` for SASL SCRAM-SHA-256
+  (credentials.rs:924, :944). A wrong or missing credential gets 464, then
+  `ERROR :Closing Link`, and the connection closes. Before registration
+  only CAP, AUTHENTICATE, PASS, NICK, USER, PING, PONG and QUIT are read
+  (crates/mimid-agent-irc/src/register.rs:99-101). A first line that looks
+  like HTTP (`GET `, `POST `) closes the connection.
 - The PASS line is never logged. The `no_token_in_logs.rs` canary gains an
   IRC connection.
 - `PASS` is kept alongside SASL, because every client has a server
@@ -969,9 +987,14 @@ src/service.rs   the `mimid` service nick
 - After registration send 900 with the user's nick as the account name
   and the user URI in the text, and 330 in WHOIS, which gives the user
   URI as the account (§7.15).
-- AGENTS.md's boundary table gains the row for the IRC boundary's one
-  check: Agent (loopback IRC), the local token by PASS, with a test that
-  a wrong token is refused.
+- AGENTS.md's boundary table has the row for this boundary: Agent (IRC,
+  any plain or TLS listener), a credential by SASL PLAIN, SASL
+  SCRAM-SHA-256 or `PASS` against the stored SCRAM-SHA-256 verifiers
+  before registration ends, or, with `[tailnet] identity = true`, the
+  connection's Tailscale node instead (frontend-auth.md §4.6, decision
+  A7), with a test that a wrong credential is refused (mimid-agent
+  `tests/front_end_auth.rs`
+  `app_passwords_and_the_agent_token_log_in_everywhere`).
 
 Several IRC connections at once are fine. Each is the same user, as with a
 bouncer, and each sees every change.

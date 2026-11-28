@@ -100,6 +100,8 @@ The file is TOML. Parsing is strict: an unknown key in any table is an error, an
 | `blob_quota_bytes` | integer, octets | `268435456` (256 MiB) | The most octets of uploads that no stored message refers to yet. An upload past the quota first deletes the oldest such uploads older than an hour, or is refused. |
 | `blob_quota_count` | integer | `256` | The most such uploads. Same rule. |
 
+There is no separate push setting. The agent always follows the server's EventSource, or the live stream with `binding = "stream"`. An EventSource stream that cannot be opened, or ends, is tried again after 1 second, the delay doubling up to 60 seconds; meanwhile `sync_interval_ms` keeps polling.
+
 ### `[jmap]`
 
 The JMAP Chat front end. On by default.
@@ -110,6 +112,8 @@ The JMAP Chat front end. On by default.
 | `listen_tls` | socket address | none | Where the endpoint also listens with HTTPS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]` and `enabled = true`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `webpush` | boolean | `true` | Whether a JMAP client may register for Web Push (`chatPush`). See [Push](#push-what-the-push-service-sees). |
 | `vtc` | boolean | `false` | Whether the agent offers calls: `VTCCall` and its signalling, and `VTCCall/exportMediaSecret`. Off by default, unlike everything else here. See below. |
+
+`listen` itself stays loopback only, because it is plaintext; `listen_tls` is how a client on another device reaches the endpoint. Its Session is its own: `apiUrl`, `uploadUrl`, `downloadUrl`, `eventSourceUrl` and the WebSocket URL all name the first `[tls] names` entry over `https:` (`wss:` for the socket), so a client is given URLs it can reach and whose certificate matches. With no configured name the address itself is used. One certificate serves every front end, each on its own port; there is no HTTP/2.
 
 With `[jmap] enabled = false` and no `[irc]`, the agent would serve nothing, and the configuration is refused.
 
@@ -124,8 +128,6 @@ It is off by default because it is the one capability here that hands out key ma
 **Nothing announces a call outside its own room.** The only signal a call exists is the MLS invite into its own room, which a client with no VTC surface cannot interpret as a call. There is no message in the parent chat and no marker for a call having ended. The `mediaTypes` and `subject` a client sets on `VTCCall/set` go no further than its own object, because the call room carries neither, so a client that joins a call it did not start learns neither; the SDP is what says which media a call carries.
 
 Receiving signals needs the JMAP WebSocket at `/jmap/ws`, which the Session advertises: a call signal is an ephemeral event and the EventSource carries only "these types changed, re-fetch", which a signal is not. A client sends `VTCStreamEnable` on the socket and the agent pushes each `VTCCallSignal` as it arrives.
-
-`listen` itself stays loopback only, because it is plaintext; `listen_tls` is how a client on another device reaches the endpoint. Its Session is its own: `apiUrl`, `uploadUrl`, `downloadUrl`, `eventSourceUrl` and the WebSocket URL all name the first `[tls] names` entry over `https:` (`wss:` for the socket), so a client is given URLs it can reach and whose certificate matches. With no configured name the address itself is used. One certificate serves every front end, each on its own port; there is no HTTP/2.
 
 ### `[irc]`
 
@@ -267,7 +269,7 @@ endpoint = "http://127.0.0.1:4318"
 Differences from the server:
 
 - `service.instance.id` is `user_uri`, so a collector that holds several agents, or an agent and its provider, can tell them apart. It also tells the collector which user this agent is; leave the table out if you do not want that.
-- The spans follow a message, not a user action: `store_send`, `store_sync` and `store_received` in the store, `agent_send_content` and `agent_receive` in the agent, and under those `mls_encrypt_and_stage`, `provider_submit`, `finish_outbox`, `provider_fetch` and `handle_message`. They are at DEBUG, which `[telemetry] span_level` exports without the log printing them. `store_send`, `agent_send_content` and `store_received` carry `msgid`, the message ID as lowercase hex, the rendering a record and an IRC `msgid` tag already use, so one message's path can be followed across both binaries. A front end's own work has no span, so a trace starts at the store.
+- The spans follow a message, not a user action: `store_send`, `store_sync` and `store_received` in the store, `agent_send_content` and `agent_receive` in the agent, and under those `mls_encrypt_and_stage`, `provider_submit`, `finish_outbox`, `provider_fetch` and `handle_message`. They are at DEBUG, which `[telemetry] span_level` exports without the log printing them. `store_send`, `agent_send_content` and `store_received` carry `msgid`, the message ID as lowercase hex, which is the rendering a record keeps, so one message's path can be followed across both binaries. An IRC `msgid` tag and a JMAP `senderMsgId` are not that string: both carry the ULID built from the hub's acceptance time and octets 1 to 10 of the message ID, so joining a trace to a line a client saw means decoding that ULID. A front end's own work has no span, so a trace starts at the store.
 
 `service_name` defaults to `mimid` in both binaries. Set it to `mimid-agent` if one collector takes the agent's export and a server's, so the two are not one service.
 
@@ -288,8 +290,6 @@ draft-atwood-mls-didwebvh-credential. The table is optional, and so is each key 
 `credential_type` and `heads_component` must match the server's `[did_webvh]` values and those of every other member of the user's rooms. The key `heads_extension_type` of earlier versions is refused as unknown.
 
 The HTTP endpoint also accepts a newer log at `POST /mimid/did-webvh/log`, with the same Host and token checks as JMAP.
-
-There is no separate push setting. The agent always follows the server's EventSource, or the live stream with `binding = "stream"`. An EventSource stream that cannot be opened, or ends, is tried again after 1 second, the delay doubling up to 60 seconds; meanwhile `sync_interval_ms` keeps polling.
 
 ## Example
 

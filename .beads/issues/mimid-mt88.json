@@ -1,0 +1,25 @@
+{
+  "id": "mimid-mt88",
+  "title": "Is 10 s the right grace for a Pidgin quit?",
+  "description": "purple-mimi.md §5.4's shutdown bound and §6.3 item 8's release grace are now both 10 s, and §5.4 says the shutdown may not be shorter than the release path it drives. Both are INVENTED and neither is implemented: mimi_shutdown is not in the tree and Runner::join_within takes its grace as a parameter.\n\nWhat nobody has decided: whether 10 s is right for a Pidgin quit, and whether a plugin unload can afford to block that long before libpurple's own exit. mimid-server's own SHUTDOWN_GRACE is 10 s (crates/mimid-server/src/main.rs:103), which is where the number came from, but a desktop client quitting is not a server draining.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:00:37.220296843Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:00:37.220296843Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-mt88",
+      "depends_on_id": "mimid-z02y",
+      "type": "discovered-from",
+      "created_at": "2026-11-28T01:00:39.075780931Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -52,11 +52,14 @@ use crate::uri::{normalized_uri, user_uri_domain};
 use mimi_protocol::components::apply_commit_op;
 use tracing::Instrument;
 
-/// `octets` as lowercase hex, the rendering a message ID has everywhere
-/// else: in a record ([`mimid_agent_store::record::Octets`], whose
-/// crate is above this one), in the IRC `msgid` tag and in a JMAP
-/// `senderMsgId`. So a span's `msgid` can be joined with those (bead
-/// mimid-604m).
+/// `octets` as lowercase hex, the rendering a record keeps a message ID
+/// in ([`mimid_agent_store::record::Octets`], whose crate is above this
+/// one), so a span and a record join on the string (bead mimid-604m).
+///
+/// An IRC `msgid` tag and a JMAP `senderMsgId` do not: both carry the
+/// ULID built from the hub's acceptance time and octets 1 through 10 of
+/// the message ID, so joining a span to either means decoding that ULID
+/// rather than matching this string.
 fn hex(octets: &[u8]) -> String {
     let mut text = String::with_capacity(octets.len() * 2);
     for octet in octets {

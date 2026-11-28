@@ -1,1 +1,2 @@
 {"id":"01a21f24-471c-7ce5-ab42-536f791d8700","issue_id":"mimid-jd8c","event_type":"created","actor":"Mark Atwood","old_value":"","new_value":"","created_at":"2026-11-27T22:33:20.924845664Z"}
+{"id":"01a21fa5-8523-7f0f-a105-5dc67fad0d1c","issue_id":"mimid-jd8c","event_type":"closed","actor":"Mark Atwood","old_value":"","new_value":"Commit 96446cd5: the IRC test client answers the server's PING from a reader task.","created_at":"2026-11-28T00:54:30.947988026Z"}

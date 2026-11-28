@@ -3,11 +3,13 @@
   "title": "The IRC test client must answer the server's PING",
   "description": "The test client in crates/mimid-agent/tests/common/irc.rs reads the socket only when a test calls next(), and never answers a PING. A test that waits on the store instead of on a line -- burn_and_expire_from_irc waits twice for the expiry loop to delete a message -- says nothing on its connection for as long as that wait takes, and the front end closes it with 'ERROR :Closing Link (Ping timeout)' after DEFAULT_PING_AFTER plus DEFAULT_PONG_WITHIN (90 s + 90 s). The next read then finds the connection gone: 'closed before the short-lived line'. Seen in a full-suite run of 2026-11-27 with twelve test binaries at once; the test passes alone. The front end is behaving correctly: a client that never answers is dead.",
   "design": "A reader task owns the read half and the writer behind a mutex, so the connection answers PING while the test is waiting on anything else, as a real client does. The PING is answered and not forwarded, so a test reads only the lines it asked about, and the front end clears its keepalive on any line received. Irc::drop aborts the task, so dropping the connection still closes the socket. Regression test over tokio::io::duplex: write a server PING into the socket and assert the PONG comes back before the test reads a line.",
-  "status": "open",
+  "status": "closed",
   "priority": 1,
   "issue_type": "bug",
   "owner": "mark@reviewcommit.com",
   "created_at": "2026-11-27T22:33:20.918807214Z",
   "created_by": "Mark Atwood",
-  "updated_at": "2026-11-27T22:33:20.918807214Z"
+  "updated_at": "2026-11-28T00:54:30.945564721Z",
+  "closed_at": "2026-11-28T00:54:30.945564721Z",
+  "close_reason": "Commit 96446cd5: the IRC test client answers the server's PING from a reader task."
 }

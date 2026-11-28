@@ -1,0 +1,25 @@
+{
+  "id": "mimid-am5b",
+  "title": "Recheck whether Palaver is still sold (client-survey.md §11, §2)",
+  "description": "client-survey.md §11's first Uncertainties entry and the §2 client table both record, dated 2026-11-21, that Palaver (iOS, closed) may no longer be sold: the iTunes lookup for id 538073623 returned no result in three stores, the store page 404s and palaverapp.com has an expired certificate; last version seen 2.10.3, 2024. §2 step 8 (the palaverapp.com cap, PALAVER command set, znc.in/playback) is conditioned on 'Only if Palaver is still sold'.\n\nAn app store cannot be checked from the agent's offline environment, so a human has to look. If Palaver is gone, drop step 8 and the Palaver rows; if it is still sold, say so in §11 and date it.",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T00:58:34.500944666Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T00:58:34.500944666Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-am5b",
+      "depends_on_id": "mimid-0xot",
+      "type": "discovered-from",
+      "created_at": "2026-11-28T00:58:34.656394773Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

@@ -231,8 +231,10 @@
 //!   `finish_outbox`, `provider_fetch` and `handle_message` (bead
 //!   mimid-604m). `store_send`, `agent_send_content` and
 //!   `store_received` carry `msgid`, the message ID as lowercase hex,
-//!   which is what a record, an IRC `msgid` tag and a JMAP
-//!   `senderMsgId` carry too. A front end's own work -- an IRC command,
+//!   which is what a record keeps. An IRC `msgid` tag and a JMAP
+//!   `senderMsgId` carry the ULID built from the hub's acceptance time
+//!   and octets 1 through 10 of that ID, so joining a trace to either
+//!   means decoding the ULID. A front end's own work -- an IRC command,
 //!   a JMAP method -- has no span, so a trace starts at the store.
 //! - Exported telemetry carries `service.instance.id` = `user_uri`, so
 //!   the collector learns which user this agent is. A user who does not

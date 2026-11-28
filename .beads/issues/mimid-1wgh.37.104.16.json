@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.37.104.16",
+  "title": "Decide whether the hub signs a hash-chain entry alongside the fanout sequence",
+  "description": "docs/design/mimi-catchup.md §7.1 and §12.4, which until now cited bead\nmimid-1wgh.37.104.1 for this. That bead is closed and carried a\ndifferent question: where the sequence rides in the /notify envelope,\nanswered by the mimi-fanout-sequence header. The hash-chain question\nwas never its subject and has had no bead of its own.\n\nTHE QUESTION. Nothing in the design binds a sequence to a message in a\nway a third party can check. Franking covers hub acceptance where it\napplies; the sequence is an HTTP header covered only by the RFC 9421\nsignature on the request that carried it, so a holder that is not the\nhub can renumber, reorder or omit without the receiver noticing.\nShould the hub sign a running hash over the room's fanout stream -- an\nentry over (previous, sequence, message digest) -- assigned in the same\nplace and at the same time as the sequence?\n\nTHE TWO READINGS.\n\n1. Assign it now, beside the sequence (§4). Any holder can then prove a\nmessage's position and no holder can hide a gap. It costs a signature\nand a chain entry per fanout, and a second thing in the envelope for\nevery implementation that parses it.\n2. Leave it to peer-to-peer backlog (bead mimid-1wgh.37.105), where it\nis question 2 of that design and where the need for it arises. It\ncosts a retrofit: the envelope, draft-atwood-mimi-catchup (bead\nmimid-1wgh.37.104.13) and any protocol-08 text (bead\nmimid-1wgh.37.104.15) would all change once other implementations\nparse them.\n\nWHY IT IS HERE AND NOT ON mimid-1wgh.37.105. §7.1 says the addition is\nto this design and not only to §7's, and the timing is what makes it a\nquestion: mimid-1wgh.37.105 is P3, not started, and blocked on its own\nquestion 1 (whether a follower may serve a room's fanout to another\nfollower at all), so parking the chain entry there decides reading 2 by\ndefault. mimid-1wgh.37.105 question 2 states the same mechanism and\nsays to consider assigning it with the sequence; this bead is that\nconsideration, and the two are one answer.\n\nMark's to answer. No code until it is answered.",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T01:00:14.818365984Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T01:00:14.818365984Z",
+  "labels": [
+    "wg"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.37.104.16",
+      "depends_on_id": "mimid-1wgh.37.104",
+      "type": "parent-child",
+      "created_at": "2026-11-28T01:00:15.266119731Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
