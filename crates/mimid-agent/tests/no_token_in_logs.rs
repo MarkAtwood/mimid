@@ -1,11 +1,12 @@
 //! The canary of AGENTS.md's "secrets never reach logs": a daemon's whole
 //! `tracing` output, at TRACE for the agent crates, through start, served
-//! and refused requests, IRC connections with a right and a wrong `PASS`,
-//! sync, the server's EventSource opened, lost, refused and opened again,
-//! and shutdown, contains neither the local token nor the user's
-//! token at the server, nor an app password in any spelling it was used
-//! in (as PASS and as a bearer token) or any SCRAM value, and has the
-//! start event with both listen addresses.
+//! and refused requests, IRC connections with a right and a wrong `PASS`
+//! and with the token mistyped as `OPER`'s password, sync, the server's
+//! EventSource opened, lost, refused and opened again, and shutdown,
+//! contains neither the local token nor the user's token at the server,
+//! nor an app password in any spelling it was used in (as PASS and as a
+//! bearer token) or any SCRAM value, and has the start event with both
+//! listen addresses.
 
 #![forbid(unsafe_code)]
 
@@ -162,6 +163,11 @@ async fn no_token_reaches_the_log() {
     irc.until_command("366").await;
     irc.send(&format!("PRIVMSG mimid :allow {token}")).await;
     irc.until_command("NOTICE").await;
+    // The token mistyped as OPER's password: the verb is refused without
+    // reading a parameter, so the log has the verb and not the token
+    // (bead mimid-1wgh.140.2).
+    irc.send(&format!("OPER alice {token}")).await;
+    assert_eq!(irc.until_command("491").await.params.len(), 2);
     // A Web Push subscription and a push (a moved read marker): neither
     // the endpoint's path nor the keys reach the log.
     let mut service = common::webpush::FakePushService::start(201).await;

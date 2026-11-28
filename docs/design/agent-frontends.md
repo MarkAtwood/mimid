@@ -1142,7 +1142,9 @@ From docs/irc-lessons.md "Must do":
 - **Messages**: `PRIVMSG` (412 for no text), `NOTICE` (never an error
   answer; to a peer it is sent as a plain message), `TAGMSG` (read and
   dropped).
-- **Other**: `QUIT` (`ERROR :Closing Link` first). Anything else gets 421.
+- **Other**: `QUIT` (`ERROR :Closing Link` first). A verb mimid does not
+  know gets 421; a verb it knows and cannot apply gets the numeric that
+  says so, by class below.
 - **Flood control**: none on loopback.
 - **The `mimid` service nick** (INVENTED, NOT FROM SPEC, documented in the
   crate): `allow <nick|uri|user@domain>`, `deny <nick|uri|user@domain>`,
@@ -1150,6 +1152,37 @@ From docs/irc-lessons.md "Must do":
   `remove #c <nick>` (the user leaves the participant list),
   `report <msgid> [reason]`, `help`. These are what IRC has no command
   for (question 5).
+
+#### Which class each Modern verb is in
+
+Epic mimid-1wgh.140 splits the Modern IRC Client Protocol's verbs three
+ways, and a verb's class decides its answer. 421 belongs to none of them:
+Modern defines it as a command the server does not know, so it is the
+answer for a verb outside Modern altogether.
+
+1. **Answerable from the agent's own facts.** It is implemented and tells
+   the truth about this agent.
+2. **Cannot apply.** mimid parses it and refuses it with the numeric its
+   own reply list in Modern gives, because a single-user agent with no
+   server link behind it has nothing for the verb to act on.
+3. **The daemon's own operation**, where IRC's verb happens to fit what
+   the daemon can do.
+
+Each verb gets a row here as it lands. Class 2 so far:
+
+| Verb | Answer | Why it cannot apply |
+|---|---|---|
+| `OPER` | 491 ERR_NOOPERHOST | One user, who already has everything there is to have; no operator block exists to match a host against. Never 381, and the password is not read, so no credential is compared outside IRC's one boundary (frontend-auth.md §4.1). |
+| `CONNECT` | 481 ERR_NOPRIVILEGES | Acts on a server link, and the agent has none. As a connection's first line it is not answered at all: HTTP's `CONNECT` method is sniffed there and the connection closes in silence. |
+| `SQUIT` | 481 ERR_NOPRIVILEGES | Breaks a server link, and the agent has none. |
+| `KILL` | 481 ERR_NOPRIVILEGES | Closes another client's connection; every nick but this user's belongs to someone at another provider. The user's own other devices go through the service's `forget-device`, a MIMI operation. None of Modern's KILL behaviour happens: no `KILL` to the target, no `QUIT` to their channels, no `ERROR`, no close. |
+| `WALLOPS` | 481 ERR_NOPRIVILEGES | Reaches every user who set mode `w`; there is one user, whose own notices already come from the service nick. Its SHOULD under Modern's "Optional Messages" is declined for that reason. |
+
+The refusal comes before any parameter count, so a bare `OPER` or
+`WALLOPS` is 491 or 481 and never 461: not reading a parameter is what
+keeps a local token mistyped as OPER's password out of every variable.
+Decision mimid-1wgh.141 carries the readings, including why 723
+ERR_NOPRIVS fits none of the four and why OPER is not 464.
 
 ## 5. The daemon
 

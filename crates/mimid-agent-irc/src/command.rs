@@ -46,8 +46,12 @@
 //! - `KICK`, `INVITE` (nick, user URI or `user@domain`, §7.15), `NAMES`,
 //!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
 //!   the user URI as the account), `ISON`, `USERHOST`,
-//!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`; every
-//!   other command is 421.
+//!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`.
+//! - `OPER` is 491 and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` are 481:
+//!   mimid knows the five and none can apply to one user with no server
+//!   link behind the agent, so each answers the numeric that says so
+//!   rather than the 421 that would call the verb unknown (decision
+//!   mimid-1wgh.141). A command mimid does not know is still 421.
 
 use mimid_agent_store::action::{MemberChanges, Role, SendOptions};
 use mimid_agent_store::convert::MessageRef;
@@ -226,6 +230,39 @@ impl Session {
                 }
             }
             "REDACT" => self.redact(line).await,
+            // The five verbs mimid knows and cannot apply: one user, and
+            // no server link behind the agent. Each answers the numeric
+            // its own reply list in the Modern IRC Client Protocol
+            // gives, not 421, which Modern §"ERR_UNKNOWNCOMMAND (421)"
+            // defines as a command the server does not know. Decision
+            // mimid-1wgh.141 records why WALLOPS's SHOULD under
+            // §"Optional Messages" is declined, why OPER is not 464
+            // ERR_PASSWDMISMATCH, and why 723 ERR_NOPRIVS fits none of
+            // the four: it is for an operator missing one named
+            // privilege and takes a `<priv>` mimid would invent.
+            //
+            // No parameter is read. Comparing OPER's password would put
+            // a second authorization boundary here, and the one for IRC
+            // is the credential checked before registration ends
+            // (`crate::register`); not reading it also keeps a local
+            // token mistyped as that password out of every variable. So
+            // a bare `OPER` or `WALLOPS` is refused, not answered 461.
+            //
+            // ERR_NOOPERHOST, Modern §"OPER message" and numerics.yml
+            // `ERR_NOOPERHOST`: no operator block exists to match a host
+            // against, so 381 RPL_YOUREOPER is never sent.
+            "OPER" => self.numeric("491", &["No O-lines for your host"]),
+            // ERR_NOPRIVILEGES, Modern §"CONNECT message", §"SQUIT
+            // message", §"KILL message", §"WALLOPS message" and
+            // numerics.yml `ERR_NOPRIVILEGES`. CONNECT and SQUIT act on
+            // a server link. KILL closes another client's connection,
+            // and the user's own other devices go through the service's
+            // `forget-device` (`crate::service`) instead. WALLOPS
+            // reaches every user who set mode `w`, and this user's own
+            // notices already come from the service nick.
+            "CONNECT" | "SQUIT" | "KILL" | "WALLOPS" => {
+                self.numeric("481", &["Permission Denied- You're not an IRC operator"]);
+            }
             other => self.numeric("421", &[other, "Unknown command"]),
         }
     }

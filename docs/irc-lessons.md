@@ -231,7 +231,12 @@ read for what it sends and expects. Details are in agent-frontends.md
   - WHOIS always ends with 318, including 401 then 318 for an unknown nick.
 - **Also implement:** NAMES, PART, QUIT (`ERROR :Closing Link` before
   closing), TOPIC, AWAY (305, 306 and 301), and ISON or USERHOST.
-- **Everything else:** answer 421.
+- **Everything else:** 421 answers a verb the server does not know, which
+  is how the Modern IRC Client Protocol defines it. A verb the server
+  knows and cannot apply answers the numeric that says so instead: in
+  mimid, OPER is 491 and CONNECT, SQUIT, KILL and WALLOPS are 481
+  (decision mimid-1wgh.141, and the class table in
+  docs/design/agent-frontends.md §4).
 
 ### Messages
 

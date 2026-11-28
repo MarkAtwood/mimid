@@ -288,16 +288,24 @@ async fn registration_queries_and_refusals() {
         assert!(irc.closes().await);
         assert!(!irc.seen.iter().any(|m| m.command == "001"));
     }
-    // Before a good PASS nothing but registration is read.
-    let mut irc = Irc::connect(addr).await;
-    irc.send("JOIN #x").await;
-    assert_eq!(irc.line().await.command, "451");
-    drop(irc);
-    // An HTTP request is closed at once, unanswered.
-    let mut irc = Irc::connect(addr).await;
-    irc.send("GET / HTTP/1.1").await;
-    assert!(irc.closes().await);
-    assert!(irc.seen.is_empty(), "{:?}", irc.seen);
+    // Before a good PASS nothing but registration is read: the refusals
+    // of the operator verbs live in the registered dispatch only, so a
+    // client that has shown no credential gets 451 and not 491 or 481.
+    for refused in ["JOIN #x", "OPER alice secret", "KILL x :y", "WALLOPS :hi"] {
+        let mut irc = Irc::connect(addr).await;
+        irc.send(refused).await;
+        assert_eq!(irc.line().await.command, "451", "{refused}");
+        drop(irc);
+    }
+    // An HTTP request is closed at once, unanswered. `CONNECT` is one of
+    // the methods sniffed for, so as a first line it never reaches the
+    // IRC verb of that name.
+    for request in ["GET / HTTP/1.1", "CONNECT other.example:443 HTTP/1.1"] {
+        let mut irc = Irc::connect(addr).await;
+        irc.send(request).await;
+        assert!(irc.closes().await, "{request}");
+        assert!(irc.seen.is_empty(), "{request}: {:?}", irc.seen);
+    }
 
     // CAP LS 302 holds registration until CAP END; REQ is all or none.
     let mut irc = Irc::connect(addr).await;
@@ -1466,6 +1474,69 @@ async fn dids_are_exposed_as_meshircd_exposes_them() {
     a.send("METADATA").await;
     let short = a.until("461", |m| m.command == "461").await;
     assert_eq!(short.params[1], "METADATA", "{}", short.raw);
+
+    alice.stop().await;
+}
+
+/// The five verbs mimid knows and cannot apply answer their own numeric,
+/// and a verb it does not know still answers 421 (bead mimid-1wgh.140.2,
+/// decision mimid-1wgh.141). The texts are Modern's literal strings,
+/// pinned on the wire because Modern lets them vary: a reworded or
+/// smart-quoted one would pass a code-only assertion.
+///
+/// The refusal comes before any parameter count, so the bare forms are
+/// refused too. That OPER's password is never read is proved by the log
+/// canary (`no_token_in_logs`), not here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn operator_verbs_are_refused_with_their_own_numerics() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let addr = alice.irc.unwrap();
+    let (mut irc, _) = Irc::register(addr, &alice.token(), ALICE_NICK, &[]).await;
+
+    for line in [
+        "OPER alice secret",
+        "OPER",
+        "oper alice secret",
+        "CONNECT other.example",
+        "SQUIT other.example :bye",
+        &format!("KILL {ALICE_NICK} :bye"),
+        "WALLOPS :hello",
+        "CONNECT",
+        "SQUIT",
+        "KILL",
+        "WALLOPS",
+        "OPERATOR",
+    ] {
+        irc.send(line).await;
+    }
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(
+        codes,
+        [
+            "491", "491", "491", "481", "481", "481", "481", "481", "481", "481", "481", "421",
+        ],
+        "{answers:#?}"
+    );
+    assert_eq!(
+        answers[0].raw,
+        format!(":{SERVER} 491 {ALICE_NICK} :No O-lines for your host")
+    );
+    assert_eq!(
+        answers[3].raw,
+        format!(":{SERVER} 481 {ALICE_NICK} :Permission Denied- You're not an IRC operator")
+    );
+    // 421 keeps its `<command>`, and OPER's arm does not swallow a verb
+    // that merely starts with it.
+    assert_eq!(answers[11].params[1], "OPERATOR", "{}", answers[11].raw);
+    assert_eq!(answers[11].params.len(), 3, "{}", answers[11].raw);
+
+    // `KILL <own nick>` was a numeric and nothing else: nothing is queued
+    // behind it and the connection still answers.
+    let after = irc.sync().await;
+    assert!(after.is_empty(), "{after:#?}");
 
     alice.stop().await;
 }

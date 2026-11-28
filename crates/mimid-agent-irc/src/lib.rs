@@ -107,6 +107,17 @@
 //!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
 //!   stay a participant, so the nick stays in the channel.
+//! - There is no IRC operator and no server link, so `OPER` is answered
+//!   491 ERR_NOOPERHOST and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` 481
+//!   ERR_NOPRIVILEGES: a refusal that names what mimid is, not the 421
+//!   that would claim it does not know the verb (decision
+//!   mimid-1wgh.141). None of Modern's KILL behaviour happens: no `KILL`
+//!   line to the target, no `QUIT` to their channels, no `ERROR`, no
+//!   close. The user's own other devices are dropped with the `mimid`
+//!   service's `forget-device`, which is a MIMI operation. A
+//!   `CONNECT` sent as a connection's first line is not answered at all:
+//!   it is taken for HTTP's `CONNECT` method and the connection closes
+//!   in silence.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
 //!   is a `PART` (§7.1), and only a new invite brings the user back.
 //! - A connection waits while the store's sync holds the agent, PING
