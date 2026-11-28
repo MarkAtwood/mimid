@@ -19,7 +19,13 @@
 //! - `ping`: seconds between `ping` events when nothing else is sent; `0`
 //!   (the default) sends none. Other values are clamped to
 //!   [`MIN_PING_SECS`]..=[`MAX_PING_SECS`] (RFC 8620 §7.3 lets the server
-//!   do so), and each ping reports the interval used.
+//!   do so), and each ping reports the interval used. A ping is written
+//!   only after the account's states have been read, as a change writes
+//!   its event: a client asking a server whether it is working is
+//!   answered by the database and not by this task's timer (decision
+//!   mimid-1wgh.132). A read that fails ends the stream, with the same
+//!   `jmap_eventsource_state_failed` a change's read logs, and the client
+//!   opens it again.
 //!
 //! Each change on the [`ChangeBus`](super::bus::ChangeBus) makes the stream recompute the
 //! account's state strings for the requested types; when any differ from
@@ -276,6 +282,23 @@ async fn stream(
                 return;
             }
             () = ping => {
+                // Read the states first, as a change does, and send
+                // nothing if that fails: a ping is the client's question
+                // whether the server is working, and one written from
+                // this task alone would answer yes while the database
+                // behind it answered nothing (decision mimid-1wgh.132).
+                // The values are not used -- a state event is the
+                // change's to send -- only the fact that they came.
+                if let Err(error) =
+                    states(&projection, key_packages.as_deref(), &store, &account, &params).await
+                {
+                    tracing::error!(
+                        name: "jmap_eventsource_state_failed",
+                        error = &error as &dyn std::error::Error,
+                        "eventsource could not read the account's states"
+                    );
+                    return;
+                }
                 let interval = params.ping.map_or(0, |p| p.as_secs());
                 let event = Event::default().event("ping").data(json!({"interval": interval}).to_string());
                 if sender.send(Ok(event)).await.is_err() {

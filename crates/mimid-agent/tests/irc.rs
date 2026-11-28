@@ -35,6 +35,12 @@ const ALICE_MASK: &str = "alice-a!alice@a.example";
 const BOB_NICK: &str = "bob-a";
 const BOB_MASK: &str = "bob-a!bob@a.example";
 
+/// How many round trips of another connection a held PING is given to
+/// show itself, in `a_ping_is_answered_once_the_agent_is_free`. Each is
+/// a full socket round trip through the same front end, so the daemon is
+/// demonstrably serving across all of them.
+const WITNESSES: usize = 20;
+
 /// The caps a full client asks for.
 const ALL_CAPS: [&str; 3] = ["message-tags", "server-time", "echo-message"];
 
@@ -121,6 +127,54 @@ async fn joined(irc: &mut Irc, mask: &str, channel: &str) -> Vec<String> {
             other => panic!("unexpected {other} in the JOIN burst: {}", m.raw),
         }
     }
+}
+
+/// A registered client's PING is answered only once the agent is free,
+/// so a PONG says the agent could have taken the user's next message
+/// (decision mimid-1wgh.132, bead mimid-w8ye). Before it the PONG was
+/// written from the connection task without touching the agent, and a
+/// daemon wedged on the agent lock answered every PING while every
+/// other command on the same connection would have blocked.
+///
+/// The agent lock is held here as a sync holds it. The check that no
+/// PONG has been written is bounded by work and not by a clock: the
+/// second connection makes [`WITNESSES`] round trips of `CAP LIST`,
+/// which is answered from memory and needs no store, so the daemon is
+/// shown to be serving that whole time. One round trip was not enough.
+/// The two connections are separate tasks, so a single `CAP LIST` can
+/// finish before the first connection has been scheduled at all, and
+/// the test passed without the fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_ping_is_answered_once_the_agent_is_free() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let irc_addr = alice.irc.unwrap();
+    let (mut client, _) = Irc::register(irc_addr, &alice.token(), "alice", &ALL_CAPS).await;
+    let (mut other, _) = Irc::register(irc_addr, &alice.token(), "alice", &[]).await;
+
+    // A free agent answers as before.
+    client.send("PING :free").await;
+    assert_eq!(client.until_command("PONG").await.text(), "free");
+
+    let held = alice.store.agent().lock().await;
+    client.send("PING :held").await;
+    for _ in 0..WITNESSES {
+        other.send("CAP LIST").await;
+        assert_eq!(other.until_command("CAP").await.params[1], "LIST");
+        while let Some(line) = client.waiting() {
+            assert_ne!(
+                line.command, "PONG",
+                "the PONG was written while the agent was held: {}",
+                line.raw
+            );
+        }
+    }
+
+    drop(held);
+    assert_eq!(client.until_command("PONG").await.text(), "held");
+    drop((client, other));
+    alice.stop().await;
 }
 
 /// The test client answers the server's PING on its own, before the

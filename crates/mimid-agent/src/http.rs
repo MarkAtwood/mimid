@@ -1582,6 +1582,20 @@ async fn stream(
                 }
             }
             () = ping => {
+                // Only while the agent is free, as IRC's PONG is
+                // (decision mimid-1wgh.132): a ping written from this
+                // task alone told the client the stream was healthy
+                // while a wedged agent was the reason no state event had
+                // come. `try_lock`, not `lock`: a ping skipped while the
+                // agent is busy is one the client tolerates, and this
+                // task stays able to notice a closed stream and a
+                // shutdown. An agent that never frees the lock writes no
+                // further ping, which is what the client's read timeout
+                // is for.
+                if endpoint.store.agent().try_lock().is_err() {
+                    ping_due = params.ping.map(|interval| tokio::time::Instant::now() + interval);
+                    continue;
+                }
                 let interval = params.ping.map_or(0, |p| p.as_secs());
                 let event = Event::default().event("ping").data(json!({"interval": interval}).to_string());
                 if sender.send(Ok(event)).await.is_err() {

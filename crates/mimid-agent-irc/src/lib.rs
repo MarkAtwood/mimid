@@ -109,8 +109,11 @@
 //!   stay a participant, so the nick stays in the channel.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
 //!   is a `PART` (§7.1), and only a new invite brings the user back.
-//! - A connection waits while the store's sync holds the agent; a client
-//!   with a short ping timeout may give up during a long sync.
+//! - A connection waits while the store's sync holds the agent, PING
+//!   included: a PONG is written only once the agent is free, so it says
+//!   the user's next message could have been taken rather than that the
+//!   socket is open (decision mimid-1wgh.132). A client whose ping
+//!   timeout is shorter than a sync gives up during one.
 //! - A connection that falls behind the change feed's log
 //!   ([`mimid_agent_store::TooOld`]) shows its channels again from the
 //!   records and is told that messages in between are not shown.

@@ -37,7 +37,11 @@
 //! is down (see [`config`]). The agent's EventSource clients get
 //! a StateChange whenever the store publishes changes (each save that has
 //! some) or a request moves the state of `Chat`, `Message`, `ChatContact`
-//! or `ReadPosition`.
+//! or `ReadPosition`, and a `ping` event at the interval they asked for
+//! while nothing else is sent, written only while the agent is free: a
+//! client that reads pings as "the agent is working" is not told yes by
+//! a timer while a wedged agent is the reason no change has come
+//! (decision mimid-1wgh.132).
 //!
 //! The Session has one account, the user's, with the capabilities
 //! `urn:ietf:params:jmap:core` and `urn:ietf:params:jmap:chat`, the URNs

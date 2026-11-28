@@ -190,6 +190,22 @@ impl Irc {
         Some(msg)
     }
 
+    /// The line already waiting, if there is one, without waiting for
+    /// the next: what the server has written up to now and the test has
+    /// not read. It is taken out of the stream, so a test that finds one
+    /// has consumed it.
+    ///
+    /// Only sound for asking whether the server has answered *yet*,
+    /// alongside something that proves it got the request and is
+    /// serving; on its own, nothing waiting means nothing more than
+    /// nothing waiting at this instant.
+    pub fn waiting(&mut self) -> Option<Msg> {
+        let line = self.lines.try_recv().ok()?;
+        let msg = Msg::parse(line.trim_end_matches("\r\n"));
+        self.seen.push(msg.clone());
+        Some(msg)
+    }
+
     /// The next line; panics at the end of the connection.
     pub async fn line(&mut self) -> Msg {
         self.next().await.expect("the connection stays open")

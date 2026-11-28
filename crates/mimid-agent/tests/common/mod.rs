@@ -622,11 +622,18 @@ impl Client {
 
     /// Opens the EventSource for every type, with no pings.
     pub async fn events(&self) -> Events {
+        self.events_pinged(0).await
+    }
+
+    /// Opens the EventSource for every type, asking for a `ping` event
+    /// every `ping` seconds (the agent clamps the interval, RFC 8620
+    /// §7.3); `0` asks for none.
+    pub async fn events_pinged(&self, ping: u64) -> Events {
         let url = self
             .event_source_url
             .replace("{types}", "*")
             .replace("{closeafter}", "no")
-            .replace("{ping}", "0");
+            .replace("{ping}", &ping.to_string());
         let response = self
             .http
             .get(url)
@@ -669,6 +676,32 @@ impl Events {
     pub async fn until_changed(&mut self, type_name: &str) -> Value {
         eprintln!("waiting for a StateChange naming {type_name}");
         loop {
+            let (name, data) = self.next_event().await;
+            if name != "state" {
+                continue;
+            }
+            assert_eq!(data["@type"], json!("StateChange"), "{data}");
+            if data["changed"][&self.account].get(type_name).is_some() {
+                return data;
+            }
+        }
+    }
+
+    /// Waits for the next `ping` event and returns the interval it
+    /// reports in seconds (RFC 8620 §7.3).
+    pub async fn until_ping(&mut self) -> u64 {
+        eprintln!("waiting for a ping event");
+        loop {
+            let (name, data) = self.next_event().await;
+            if name == "ping" {
+                return data["interval"].as_u64().unwrap();
+            }
+        }
+    }
+
+    /// The next event: its name, and its data parsed.
+    async fn next_event(&mut self) -> (String, Value) {
+        loop {
             while let Some(end) = self.buffer.find("\n\n") {
                 let block: String = self.buffer.drain(..end + 2).collect();
                 let mut event = None;
@@ -680,13 +713,8 @@ impl Events {
                         data.push_str(text.trim_start());
                     }
                 }
-                if event.as_deref() != Some("state") {
-                    continue;
-                }
-                let change: Value = serde_json::from_str(&data).unwrap();
-                assert_eq!(change["@type"], json!("StateChange"), "{change}");
-                if change["changed"][&self.account].get(type_name).is_some() {
-                    return change;
+                if let Some(name) = event {
+                    return (name, serde_json::from_str(&data).unwrap());
                 }
             }
             let chunk = self

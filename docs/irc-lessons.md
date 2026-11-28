@@ -159,6 +159,13 @@ read for what it sends and expects. Details are in agent-frontends.md
 - Answer PING with `:server PONG server :token`. irssi matches the last
   parameter (irssi 1.4.3 took `:server PONG server :server` as its lag
   pong, checked 2026-11-21), and tailircd's bare `PONG token` was wrong.
+- Answer it from whatever the client is really asking about. A PONG
+  written straight from the connection's own loop says the loop is
+  pumping and nothing more, so a server wedged behind its backend goes on
+  claiming to work; mimid holds the agent lock first, which is what the
+  next PRIVMSG would wait for (decision mimid-1wgh.132). The cost is that
+  a client whose ping timeout is shorter than a slow backend operation
+  gives up, which is the answer the client asked for.
 
 ### Line length and encoding
 

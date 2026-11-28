@@ -151,7 +151,18 @@ impl Session {
     pub(crate) async fn command(&mut self, line: &Line) {
         match line.verb().as_str() {
             "CAP" => self.cap(line),
-            "PING" => self.ping(line),
+            // Through the agent, not from the socket: a PONG says the
+            // user's next message could have been taken, which is what
+            // a keepalive is asked. Every other command here waits for
+            // the same lock, so a PING that answered without it was the
+            // one line a wedged daemon still got right (decision
+            // mimid-1wgh.132). An unregistered connection keeps the
+            // plain answer in `register`, so an unauthenticated peer
+            // queues nothing behind the agent.
+            "PING" => {
+                drop(self.shared.store.agent().lock().await);
+                self.ping(line);
+            }
             "PONG" => {}
             "PASS" | "USER" => self.numeric("462", &["You may not reregister"]),
             "NICK" => {

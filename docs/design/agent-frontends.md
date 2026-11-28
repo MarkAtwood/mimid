@@ -1097,7 +1097,14 @@ From docs/irc-lessons.md "Must do":
   mimid IRC Network nick!user@host`), 002 to 004, 005, 900, then 422.
 - **Keepalive**: `PING` and `PONG`. The server pings after 90 s idle and
   closes 90 s after an unanswered ping. It answers `:server PONG server
-  :token`. INVENTED VALUES.
+  :token`, and for a registered connection it writes that answer only
+  once the agent is free, so a PONG says the user's next message could
+  have been taken and not merely that the socket is open (decision
+  mimid-1wgh.132). An unregistered connection is answered at once, so an
+  unauthenticated peer queues nothing behind the agent. MIMI defines no
+  keepalive of its own: protocol-07, content-10, arch-03 and
+  room-policy-04 have no ping, pong, heartbeat or liveness in them, so
+  what a PONG can carry is the agent's own evidence. INVENTED VALUES.
 - **Lines**: read up to 8191 octets of tags plus 512 once message-tags is
   on; a longer line gets 417, not a disconnect. Write lines of at most 512
   octets with prefix and tags; split 353; unescape tags per the spec.
