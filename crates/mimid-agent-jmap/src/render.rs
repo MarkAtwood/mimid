@@ -639,6 +639,7 @@ mod tests {
             display_name: Some("Alice A.".into()),
             did: None,
             did_changed_at: None,
+            clients: None,
             first_seen: ms("2026-11-20T01:45:00.000Z"),
             ext: Default::default(),
         });

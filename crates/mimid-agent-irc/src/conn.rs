@@ -52,6 +52,9 @@ pub(crate) struct Shared {
     /// Tailnet identity, once switched on (docs/design/frontend-auth.md
     /// §4.6): who the daemon says a peer is, before any credential.
     pub(crate) peer_identity: std::sync::OnceLock<Arc<dyn crate::PeerIdentity>>,
+    /// Reading the daemon's configuration file again, once switched on
+    /// (docs/design/agent-frontends.md §7.38): what `REHASH` asks for.
+    pub(crate) reload: std::sync::OnceLock<Arc<dyn crate::Reload>>,
     /// Every registered connection, so `/msg mimid tailnet` can list the
     /// matched nodes with their open sessions (§4.6; bead
     /// mimid-e13m.18). A connection adds itself when registration ends
@@ -59,6 +62,10 @@ pub(crate) struct Shared {
     sessions: Mutex<BTreeMap<u64, SessionInfo>>,
     /// The next session id; ids are never reused.
     next_session: std::sync::atomic::AtomicU64,
+    /// The most connections registered at one time since the daemon
+    /// started, which LUSERS gives as the maximum of 265 and 266
+    /// (`crate::command`).
+    peak_sessions: std::sync::atomic::AtomicUsize,
 }
 
 /// One registered connection, as `/msg mimid tailnet` lists it.
@@ -110,8 +117,10 @@ impl Shared {
             part_reasons: Mutex::new(HashMap::new()),
             web_push: std::sync::OnceLock::new(),
             peer_identity: std::sync::OnceLock::new(),
+            reload: std::sync::OnceLock::new(),
             sessions: Mutex::new(BTreeMap::new()),
             next_session: std::sync::atomic::AtomicU64::new(1),
+            peak_sessions: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -148,6 +157,13 @@ impl Shared {
         self.peer_identity.get().cloned()
     }
 
+    /// Reading the configuration file again, if the daemon switched it
+    /// on; `None` for a daemon that was configured in code and has no
+    /// file to read.
+    pub(crate) fn reload(&self) -> Option<Arc<dyn crate::Reload>> {
+        self.reload.get().cloned()
+    }
+
     /// Every registered connection, oldest first.
     pub(crate) fn sessions(&self) -> Vec<SessionInfo> {
         self.sessions
@@ -158,16 +174,36 @@ impl Shared {
             .collect()
     }
 
+    /// How many connections are registered.
+    pub(crate) fn session_count(&self) -> usize {
+        self.sessions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+
+    /// The most connections that were registered at one time since the
+    /// daemon started.
+    pub(crate) fn peak_sessions(&self) -> usize {
+        self.peak_sessions
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Adds `info` to the registry; the place is taken out when the
     /// returned guard drops.
     pub(crate) fn register(self: &Arc<Self>, info: SessionInfo) -> Registered {
         let id = self
             .next_session
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.sessions
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(id, info);
+        {
+            let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
+            sessions.insert(id, info);
+            // Raised under the registry's own lock, so the mark cannot
+            // miss a connection that registered between the insert and
+            // the read.
+            self.peak_sessions
+                .fetch_max(sessions.len(), std::sync::atomic::Ordering::Relaxed);
+        }
         Registered {
             shared: Arc::clone(self),
             id,
@@ -208,6 +244,31 @@ pub(crate) struct Caps {
     pub(crate) webpush: bool,
     pub(crate) message_redaction: bool,
     pub(crate) multi_prefix: bool,
+    pub(crate) account_tag: bool,
+    pub(crate) extended_join: bool,
+    pub(crate) standard_replies: bool,
+}
+
+impl Caps {
+    /// Whether tag `key` is written to a client with these capabilities.
+    ///
+    /// `message-tags` is support for every well-formed tag. Without it,
+    /// `account-tag`, `server-time` and `batch` each "implicitly depend
+    /// on the tag format", and a client that negotiates one of them
+    /// "MUST support the full tag format"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Capabilities"), so
+    /// that capability's own tag is written to it and no other: the same
+    /// section says implementations "SHOULD NOT assume support for all
+    /// tags when an individual tag capability is negotiated". HexChat is
+    /// the client this is for: it negotiates `server-time` and
+    /// `account-tag` and not `message-tags`
+    /// (docs/design/client-survey.md §2 "What the clients use").
+    pub(crate) fn takes_tag(&self, key: &str) -> bool {
+        self.message_tags
+            || (self.account_tag && key == "account")
+            || (self.server_time && key == "time")
+            || (self.batch && key == "batch")
+    }
 }
 
 /// What the session showed of a channel.
@@ -288,6 +349,12 @@ pub(crate) struct Session {
     pub(crate) channels: BTreeMap<Key, ChannelView>,
     pub(crate) shown: HashMap<Key, ShownMessage>,
     pub(crate) invites_shown: BTreeSet<u64>,
+    /// The nicks this connection monitors, by folded nick, with the nick
+    /// as the client sent it and the verdict last reported for it
+    /// ([`crate::monitor`]). Per connection and never persisted: a
+    /// reconnect starts empty, which is what a client that re-sends
+    /// `MONITOR +` after registration expects.
+    pub(crate) monitor: BTreeMap<String, crate::monitor::Monitored>,
     /// The name this connection sent JOIN for to accept an invite, by the room's
     /// URI, until the room arrives: a one-to-one room is a query, so the
     /// name is answered with JOIN and PART (docs/irc-lessons.md "Answer
@@ -334,6 +401,7 @@ impl Session {
             channels: BTreeMap::new(),
             shown: HashMap::new(),
             invites_shown: BTreeSet::new(),
+            monitor: BTreeMap::new(),
             accepted_names: HashMap::new(),
             own_sends: HashSet::new(),
             connected_at: 0,
@@ -344,10 +412,41 @@ impl Session {
         }
     }
 
-    /// Queues `out`, with tags if the client has message-tags.
+    /// Queues `out`, with the tags this client takes.
     pub(crate) fn send(&mut self, out: &Out) {
-        self.out
-            .extend_from_slice(out.to_wire(self.caps.message_tags).as_bytes());
+        let wire = self.tags_taken(out).to_wire(true);
+        self.out.extend_from_slice(wire.as_bytes());
+    }
+
+    /// `out` with the tags this client does not take dropped
+    /// ([`Caps::takes_tag`]).
+    fn tags_taken(&self, out: &Out) -> Out {
+        if self.caps.message_tags || out.tags.is_empty() {
+            return out.clone();
+        }
+        let mut taken = out.clone();
+        taken.tags.retain(|(key, _)| self.caps.takes_tag(key));
+        taken
+    }
+
+    /// What is left of [`MAX_LINE`] for the last parameter of `probe`,
+    /// the tags this client takes counted in.
+    ///
+    /// Tags have a budget of their own, "the size limit for the rest of
+    /// the message remains unchanged at 512 bytes"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Size limit"), and
+    /// charging them to the 512 as well is this front end's own
+    /// narrowing: every line it writes then fits 512 octets tags
+    /// included, which is what the test harness asserts of each one.
+    pub(crate) fn room_for(&self, probe: &Out) -> usize {
+        self.tags_taken(probe).room_for_trailing(true)
+    }
+
+    /// The octets `out` takes on the wire for this client, the tags it
+    /// takes counted in: for a caller whose room is in a middle
+    /// parameter and not the last ([`Session::room_for`]).
+    pub(crate) fn wire_len(&self, out: &Out) -> usize {
+        self.tags_taken(out).to_wire(true).len()
     }
 
     /// Queues `wire`, a whole line with its CR-LF.
@@ -375,7 +474,7 @@ impl Session {
     /// fit the line limit: for peer text that is not split over lines
     /// (a topic).
     pub(crate) fn send_cut(&mut self, mut out: Out) {
-        out.cut_to_fit(self.caps.message_tags);
+        out.cut_to_room(self.room_for(&out));
         self.send(&out);
     }
 
@@ -388,6 +487,23 @@ impl Session {
         self.send_cut(out);
     }
 
+    /// Queues `FAIL <command> <code> [<context>...] <description>` from
+    /// the server, its description cut to fit
+    /// (~/PROJECT/IETF/specs/ircv3-standard-replies.md, "Message
+    /// Format"; the `standard-replies` capability).
+    ///
+    /// `command` is `*` where the reply "is initiated outside the
+    /// context of a client command" or "the client command is not
+    /// available or cannot be relayed" (ibid.), which is the case for a
+    /// line that could not be parsed.
+    pub(crate) fn fail(&mut self, command: &str, code: &str, context: &[&str], description: &str) {
+        let mut params = vec![command.to_owned(), code.to_owned()];
+        params.extend(context.iter().map(|c| (*c).to_owned()));
+        params.push(description.to_owned());
+        let server = self.shared.server.clone();
+        self.send_cut(Out::new(&server, "FAIL", params));
+    }
+
     /// Queues a NOTICE from the server to the client.
     pub(crate) fn server_notice(&mut self, text: &str) {
         let out = Out::new(
@@ -396,6 +512,19 @@ impl Session {
             vec![self.target(), one_line(text)],
         );
         self.send(&out);
+    }
+
+    /// Queues a NOTICE from the server to the client, cut to fit the
+    /// line limit ([`Session::send_cut`]): for text holding something
+    /// whose length is not the crate's to bound, as a configured path is
+    /// not (§7.38).
+    pub(crate) fn server_notice_cut(&mut self, text: &str) {
+        let out = Out::new(
+            &self.shared.server,
+            "NOTICE",
+            vec![self.target(), one_line(text)],
+        );
+        self.send_cut(out);
     }
 
     /// The user's own identity; registered sessions only.
@@ -482,7 +611,25 @@ impl Session {
             return;
         }
         let Ok(text) = std::str::from_utf8(bytes) else {
-            self.server_notice("mimid: that line was not UTF-8 and was not sent (UTF8ONLY)");
+            // ~/PROJECT/IETF/specs/ircv3-utf8-only.md: a server
+            // publishing UTF8ONLY in 005 "MUST NOT relay content ...
+            // containing non-UTF-8 data", and handling of such a line
+            // "is implementation-defined; for example, they MAY send the
+            // `INVALID_UTF8` code". The command is `*` and not a verb
+            // read out of undecodable octets. The NOTICE stays for a
+            // client without `standard-replies`, which has no contract
+            // to show an unrecognised FAIL and would otherwise see
+            // nothing at all.
+            if self.caps.standard_replies {
+                self.fail(
+                    "*",
+                    "INVALID_UTF8",
+                    &[],
+                    "That line was not UTF-8 and was not sent",
+                );
+            } else {
+                self.server_notice("mimid: that line was not UTF-8 and was not sent (UTF8ONLY)");
+            }
             return;
         };
         let Some(line) = line::parse(text) else {
@@ -505,6 +652,10 @@ impl Session {
                     self.apply(&change);
                     self.mark = seq;
                 }
+                // One hook for every change that could have moved a
+                // monitored nick's reachability, so no Change variant
+                // has to be enumerated (§7.39).
+                self.monitor_refresh();
             }
             Err(_too_old) => {
                 self.mark = store.last_seq();
@@ -513,6 +664,7 @@ impl Session {
                      and messages in between are not shown",
                 );
                 self.show_all();
+                self.monitor_refresh();
             }
         }
     }

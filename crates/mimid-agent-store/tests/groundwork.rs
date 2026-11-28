@@ -1418,3 +1418,100 @@ async fn a_hidden_direct_room_comes_back_with_its_next_message() {
     bob.sync().await.unwrap();
     assert_eq!(bob.state().room_of_uri(&direct.uri), Some(&again.key));
 }
+
+/// How many of `user`'s clients `store` counted in a shared group, as the
+/// person record has it.
+fn clients_of(store: &Store, user: &str) -> Option<u32> {
+    let state = store.state();
+    let key = state.person_of_user(user)?;
+    state.people.get(key)?.clients
+}
+
+/// Oracle: `Agent::clients` of the room, which is the MLS group's leaves,
+/// against the `clients` the store wrote on each person record
+/// (`sync::refresh_clients`; docs/design/agent-frontends.md §7.39,
+/// decision mimid-1wgh.146). A leaf added or removed moves the room's
+/// epoch, which is the gate the pass runs under, and a user who shares no
+/// room counts zero rather than keeping what the record had.
+#[tokio::test]
+async fn a_person_record_counts_the_clients_in_a_shared_group() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB, CAROL]).await;
+    let mut alice = agent(&server, ALICE, dir.path()).await;
+    let bob = Store::new(agent(&server, BOB, dir.path()).await, InvitePolicy::Any);
+    bob.open_database().unwrap();
+    bob.agent()
+        .lock()
+        .await
+        .publish_key_packages(4)
+        .await
+        .unwrap();
+    let room = alice.host_room(&HostOptions::named("r")).await.unwrap();
+    alice.invite(&room, BOB).await.unwrap();
+    let changes = server.changes.clone();
+
+    // The first sync of this process counts every leaf, so alice's one
+    // device is Some(1) and not left as None.
+    until_store(&bob, &changes, |s| clients_of(s, ALICE) == Some(1)).await;
+
+    // A person who shares no room is Some(0), not None: a contact with
+    // nothing in any group is unreachable, which is the whole fact.
+    // Written here as an upgraded record would arrive, with no `clients`
+    // field at all.
+    let carol_key = bob.new_key();
+    bob.state()
+        .insert_person(mimid_agent_store::record::Person {
+            key: carol_key.clone(),
+            user: CAROL.to_owned(),
+            display_name: None,
+            did: None,
+            did_changed_at: None,
+            clients: None,
+            first_seen: 0,
+            ext: BTreeMap::new(),
+        });
+    assert_eq!(clients_of(&bob, CAROL), None, "no sync has counted yet");
+
+    // A second device of alice's joins by external Commit, which moves
+    // the epoch: alice is two, carol is repaired to zero.
+    let seq = bob.last_seq();
+    // Records that alice accepted the room, which is what the new device
+    // finds (decision mimid-1wgh.63), as tests/send_crash.rs does.
+    alice.join_own_rooms().await.unwrap();
+    let mut second = device(&server, ALICE, dir.path(), "alice-2").await;
+    let mut watch = changes.watch_server();
+    loop {
+        second.join_own_rooms().await.unwrap();
+        if second
+            .rooms()
+            .iter()
+            .any(|r| r.uri == room && r.status == mimid_agent_core::RoomStatus::Active)
+        {
+            break;
+        }
+        if !second.poll().await.unwrap().is_empty() {
+            continue;
+        }
+        watch.next("the second device to join").await;
+    }
+    until_store(&bob, &changes, |s| clients_of(s, ALICE) == Some(2)).await;
+    assert_eq!(clients_of(&bob, CAROL), Some(0));
+    // The oracle for the counts: the leaves of the group as bob's own
+    // agent has them, which is where the pass reads them.
+    assert_eq!(
+        bob.agent().lock().await.clients(&room).unwrap().len(),
+        3,
+        "two of alice's and one of bob's"
+    );
+
+    // The count is published as a change, so a front end that shows
+    // reachability is told to read the record again.
+    let alice_key = bob.state().person_of_user(ALICE).cloned().unwrap();
+    assert!(
+        bob.changes_since(seq)
+            .unwrap()
+            .iter()
+            .any(|(_, c)| *c == mimid_agent_store::Change::PersonChanged(alice_key.clone())),
+        "a PersonChanged for the moved count"
+    );
+}

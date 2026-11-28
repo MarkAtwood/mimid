@@ -17,6 +17,7 @@
 
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, MAX_LINE, Out, pack_words};
+use crate::monitor::MAX_MONITOR;
 use crate::names::{CHANNELLEN, NICKLEN};
 use mimid_agent_store::credentials::Login;
 
@@ -24,19 +25,58 @@ use mimid_agent_store::credentials::Login;
 /// (docs/irc-lessons.md "CAP"). `soju.im/account-required` only says that
 /// a login is needed (docs/design/frontend-auth.md §4.1); a REQ of it is
 /// acknowledged and changes nothing.
-pub const CAPS: [&str; 12] = [
+///
+/// `MONITOR` is not here and never will be: the IRCv3 Monitor spec
+/// announces itself through the 005 token alone ([`isupport`]). Two
+/// capabilities must never be added (bead mimid-1wgh.140.6 owns this
+/// list): `setname`, because "Servers advertising the `setname`
+/// capability MUST support usage of the command"
+/// (~/PROJECT/IETF/specs/ircv3-setname.md:28-30) and mimid refuses it;
+/// and `extended-monitor`, which adds only AWAY, ACCOUNT, CHGHOST and
+/// SETNAME notifications for monitored nicks, none of which this front
+/// end has.
+///
+/// The three of bead mimid-1wgh.140.6, with the file each came from:
+/// `account-tag` (~/PROJECT/IETF/specs/ircv3-account-tag.md) and
+/// `extended-join` (ircv3-extended-join.md), which carry the MIMI user
+/// URI a nick stands for, the same string 311 `RPL_WHOISUSER` and 330
+/// `RPL_WHOISACCOUNT` already send; and `standard-replies`
+/// (ircv3-standard-replies.md), the `FAIL`, `WARN` and `NOTE` format
+/// this front end already writes for `CHATHISTORY`, `METADATA`,
+/// `REDACT`, `MONITOR` and `ACCOUNT_REQUIRED`.
+///
+/// `standard-replies` carries a RECOMMENDED this front end does not
+/// follow: that a server "use standard replies instead of
+/// vendor-specific error numerics or server notices for
+/// non-standardised features" when answering a client that supports it
+/// (ircv3-standard-replies.md, "Capabilities"). The same document
+/// requires that implementers "MUST use an existing code if one is
+/// already defined", and the registry it names for that is a web page,
+/// not one of the files in ~/PROJECT/IETF/specs, so a code invented here
+/// for one of the remaining failure notices is unverifiable and may
+/// collide with a registered one later. Those notices stay notices until
+/// the registry is in hand.
+///
+/// `utf8only` is not a capability and so is not here:
+/// ircv3-utf8-only.md defines an ISUPPORT token, which [`isupport`]
+/// sends. What that document gives this front end is the `INVALID_UTF8`
+/// reply code (`Session::on_line`).
+pub const CAPS: [&str; 15] = [
+    "account-tag",
     "batch",
     "draft/chathistory",
     "draft/event-playback",
     "draft/message-redaction",
     "draft/read-marker",
     "echo-message",
+    "extended-join",
     "message-tags",
     "multi-prefix",
     "sasl",
     "server-time",
     "soju.im/account-required",
     "soju.im/webpush",
+    "standard-replies",
 ];
 
 /// The 005 tokens (docs/design/agent-frontends.md §4 "Capabilities in
@@ -50,7 +90,13 @@ pub fn isupport() -> Vec<String> {
         "CHANMODES=b,,,nt".to_owned(),
         format!("NICKLEN={NICKLEN}"),
         format!("CHANNELLEN={CHANNELLEN}"),
-        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1".to_owned(),
+        // `MONITOR:` with no limit: Modern §"TARGMAX Parameter" says a
+        // client "SHOULD assume that no commands except the JOIN and
+        // PART commands accept multiple parameters" where a command is
+        // not listed, and MONITOR takes a target list bounded only by
+        // the line (ircv3-monitor.md:56-58). Modern's own example shows
+        // the same empty-limit form, `ACCEPT:,MONITOR:`.
+        "TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1,MONITOR:".to_owned(),
         format!("LINELEN={MAX_LINE}"),
         "UTF8ONLY".to_owned(),
         "NETWORK=mimid".to_owned(),
@@ -62,6 +108,16 @@ pub fn isupport() -> Vec<String> {
             mimid_agent_store::history::MAX_HISTORY_PAGE
         ),
         "MSGREFTYPES=timestamp,msgid".to_owned(),
+        // How the IRCv3 Monitor spec says support is announced:
+        // "Support of this specification is indicated by the MONITOR
+        // token in RPL_ISUPPORT (005). This token takes an optional
+        // parameter, of the maximum amount of targets a client may have
+        // in their monitor list" (ircv3-monitor.md:60-65). mimid's list
+        // is bounded, so the parameter is always there. No NAMELEN
+        // token: that one belongs to the `setname` capability, which
+        // mimid refuses the command of (crate::command, decision
+        // mimid-1wgh.146).
+        format!("MONITOR={MAX_MONITOR}"),
         // The client-only tags the front end reads; others (`+typing`)
         // would go nowhere (IRCv3 Message Tags, "CLIENTTAGDENY").
         "CLIENTTAGDENY=*,-draft/reply,-reply,-draft/react,-draft/unreact".to_owned(),
@@ -237,6 +293,7 @@ impl Session {
             "LIST" => {
                 let mut on = Vec::new();
                 for (cap, enabled) in [
+                    ("account-tag", self.caps.account_tag),
                     ("batch", self.caps.batch),
                     ("draft/chathistory", self.caps.chathistory),
                     ("draft/event-playback", self.caps.event_playback),
@@ -244,10 +301,12 @@ impl Session {
                     ("draft/read-marker", self.caps.read_marker),
                     ("soju.im/webpush", self.caps.webpush),
                     ("echo-message", self.caps.echo_message),
+                    ("extended-join", self.caps.extended_join),
                     ("message-tags", self.caps.message_tags),
                     ("multi-prefix", self.caps.multi_prefix),
                     ("sasl", self.caps.sasl),
                     ("server-time", self.caps.server_time),
+                    ("standard-replies", self.caps.standard_replies),
                 ] {
                     if enabled {
                         on.push(cap);
@@ -284,6 +343,12 @@ impl Session {
                         "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,
                         "server-time" => caps.server_time = on,
+                        // The `account` tag goes to this client whether
+                        // or not it also asked for message-tags
+                        // ([`crate::conn::Caps::takes_tag`]).
+                        "account-tag" => caps.account_tag = on,
+                        "extended-join" => caps.extended_join = on,
+                        "standard-replies" => caps.standard_replies = on,
                         _ => known = false,
                     }
                 }
@@ -413,11 +478,15 @@ impl Session {
         if let Some(asked) = self.client_nick.clone()
             && asked != me.nick
         {
-            let out = Out::new(
+            let mut out = Out::new(
                 &format!("{asked}!{}@{}", me.user, me.host),
                 "NICK",
                 vec![me.nick.clone()],
             );
+            // The user's own command, so it carries the user's
+            // `account` (`crate::render::account_tag`).
+            out.tags
+                .extend(crate::render::account_tag(&me, self.caps.account_tag));
             self.send(&out);
         }
         self.numeric(
@@ -470,6 +539,104 @@ impl Session {
 mod tests {
     use super::*;
 
+    /// Oracles: the capability name each of
+    /// ~/PROJECT/IETF/specs/ircv3-*.md gives at "capability negotiation
+    /// time", written out by hand; docs/irc-lessons.md "CAP", that a
+    /// capability advertised and not honoured is worse than one absent.
+    ///
+    /// The list is the whole offer, in the order a reviewer lines it up
+    /// against those files, and the names that must stay out of it are
+    /// named here too (bead mimid-1wgh.140.6): re-offering one takes
+    /// changing this test, which takes an argument.
+    #[test]
+    fn the_cap_list_holds_only_what_is_wired_up() {
+        assert_eq!(
+            CAPS,
+            [
+                "account-tag",
+                "batch",
+                "draft/chathistory",
+                "draft/event-playback",
+                "draft/message-redaction",
+                "draft/read-marker",
+                "echo-message",
+                "extended-join",
+                "message-tags",
+                "multi-prefix",
+                "sasl",
+                "server-time",
+                "soju.im/account-required",
+                "soju.im/webpush",
+                "standard-replies",
+            ]
+        );
+        let mut sorted = CAPS;
+        sorted.sort_unstable();
+        assert_eq!(CAPS, sorted);
+        for out in [
+            // No away state exists to propagate: AWAY answers 305 and
+            // 306 and stores nothing, and WHO's flags are always `H`.
+            "away-notify",
+            // A nick's account is its user URI and is never moved to
+            // another person, so ACCOUNT can never be sent.
+            "account-notify",
+            // A third party's invite is invisible: a member added by
+            // someone else is indistinguishable from one who joined.
+            "invite-notify",
+            // The user and host are the URI's local part and domain;
+            // neither changes.
+            "chghost",
+            // The answers a label would ride on come back from the
+            // change feed, not from the dispatch of the command
+            // (docs/irc-lessons.md "labeled-response").
+            "labeled-response",
+            // An ISUPPORT token, not a capability
+            // (ircv3-utf8-only.md); `isupport` sends it.
+            "utf8only",
+            // Both would promise a command this front end refuses.
+            "setname",
+            "extended-monitor",
+        ] {
+            assert!(!CAPS.contains(&out), "{out}");
+        }
+    }
+
+    /// Oracle: ~/PROJECT/IETF/specs/ircv3-message-tags.md,
+    /// "Capabilities": `account-tag`, `server-time` and `batch`
+    /// "implicitly depend on the tag format", and a client negotiating
+    /// one "MUST support the full tag format"; the same section says an
+    /// implementation "SHOULD NOT assume support for all tags when an
+    /// individual tag capability is negotiated".
+    ///
+    /// HexChat negotiates `account-tag` and `server-time` and not
+    /// `message-tags` (docs/design/client-survey.md §2), so a gate on
+    /// `message-tags` alone would drop the tag of a capability that
+    /// client asked for.
+    #[test]
+    fn a_tag_capability_carries_its_own_tag_without_message_tags() {
+        let caps = crate::conn::Caps {
+            account_tag: true,
+            server_time: true,
+            ..crate::conn::Caps::default()
+        };
+        assert!(caps.takes_tag("account"));
+        assert!(caps.takes_tag("time"));
+        assert!(!caps.takes_tag("batch"));
+        assert!(!caps.takes_tag("msgid"));
+        assert!(!caps.takes_tag("+draft/reply"));
+        let tags = crate::conn::Caps {
+            message_tags: true,
+            ..crate::conn::Caps::default()
+        };
+        for key in ["account", "time", "batch", "msgid", "+draft/reply"] {
+            assert!(tags.takes_tag(key), "{key}");
+        }
+        let none = crate::conn::Caps::default();
+        for key in ["account", "time", "batch", "msgid"] {
+            assert!(!none.takes_tag(key), "{key}");
+        }
+    }
+
     /// Oracle: IRCv3 Capability Negotiation, "CAP LS": with 302, every
     /// line but the last carries `*`; without it, one line.
     #[test]
@@ -517,5 +684,28 @@ mod tests {
         from_004.sort_unstable();
         assert_eq!(from_004, from_005);
         assert!(tokens.contains(&"draft/ACCOUNTREQUIRED".to_owned()));
+        // How the IRCv3 Monitor spec says support is announced
+        // (ircv3-monitor.md:60-65), with the bound as its parameter,
+        // and `MONITOR:` in TARGMAX because the command takes a list
+        // (Modern §"TARGMAX Parameter"). No NAMELEN, which belongs to
+        // the `setname` capability mimid does not advertise.
+        assert!(
+            tokens.contains(&format!("MONITOR={MAX_MONITOR}")),
+            "{tokens:?}"
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.starts_with("TARGMAX=") && t.contains(",MONITOR:")),
+            "{tokens:?}"
+        );
+        assert!(
+            !tokens.iter().any(|t| t.starts_with("NAMELEN")),
+            "{tokens:?}"
+        );
+        // Neither capability may be offered (ircv3-setname.md:28-30).
+        for absent in ["setname", "extended-monitor"] {
+            assert!(!CAPS.contains(&absent), "{absent}");
+        }
     }
 }

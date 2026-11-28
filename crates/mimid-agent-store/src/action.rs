@@ -1698,6 +1698,7 @@ impl Store {
             display_name,
             did: None,
             did_changed_at: None,
+            clients: None,
             first_seen: now_ms(),
             ext: BTreeMap::new(),
         };

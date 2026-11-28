@@ -46,21 +46,175 @@
 //! - `KICK`, `INVITE` (nick, user URI or `user@domain`, §7.15), `NAMES`,
 //!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
 //!   the user URI as the account), `ISON`, `USERHOST`,
-//!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`; every
-//!   other command is 421.
+//!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`.
+//! - `MONITOR` (730, 731, 732, 733, 734; 461 for a missing or empty
+//!   target list, `FAIL MONITOR INVALID_PARAMS` for an unknown modifier,
+//!   a target that is no nick here or a parameter too many) reports
+//!   reachability and not availability ([`crate::monitor`]), and
+//!   `SETNAME` is refused with `FAIL SETNAME CANNOT_CHANGE_REALNAME`
+//!   (decision mimid-1wgh.146).
+//! - `WHOWAS` (314, 312, then 369; 406 then 369 for a nick this run has
+//!   not given; always ends 369) says which MIMI user a nick stands for
+//!   and since when (decision mimid-1wgh.143).
+//! - `ADMIN` (256 to 259, and 402 for a target that is not this server),
+//!   `LUSERS` (251 to 255, 265, 266) and `LINKS` (one 364, then 365)
+//!   answer from the agent's own facts and name no host, no provider and
+//!   no peer (decision mimid-1wgh.142).
+//! - `OPER` is 491 and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` are 481:
+//!   mimid knows the five and none can apply to one user with no server
+//!   link behind the agent, so each answers the numeric that says so
+//!   rather than the 421 that would call the verb unknown (decision
+//!   mimid-1wgh.141). A command mimid does not know is still 421.
+//! - `REHASH` reads the daemon's configuration file again and answers a
+//!   NOTICE for each setting that changed, saying whether it is in use
+//!   now or needs a restart, and then 382; a reload that read nothing
+//!   gets the NOTICE alone (§7.38). `RESTART` is 481, the one numeric
+//!   Modern gives a command it calls optional.
 
 use mimid_agent_store::action::{MemberChanges, Role, SendOptions};
 use mimid_agent_store::convert::MessageRef;
 use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
-use crate::line::{Line, Out};
-use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_address, parse_user_uri};
+use crate::line::{Line, Out, echoed};
+use crate::names::{
+    Held, SERVICE_NICK, Was, fold, is_channel_name, parse_user_address, parse_user_uri,
+};
+use crate::render::server_time;
 
 /// The message a line replies to: `+draft/reply`, or `+reply`, which
 /// Goguma sends beside it (goguma 5aa7baa5 `lib/client.dart:1359-1363`).
 fn reply_tag(line: &Line) -> Option<&str> {
     line.tag("+draft/reply").or_else(|| line.tag("+reply"))
+}
+
+/// The nick `WHOWAS` asks about: its first parameter. Modern gives the
+/// command "Parameters: `<nick> [<count>]`", so the nick is the first,
+/// not the last as in WHOIS, and one nick, not RFC 2812's comma list
+/// (decision mimid-1wgh.143).
+fn whowas_nick(line: &Line) -> Option<&str> {
+    line.param(0).filter(|nick| !nick.is_empty())
+}
+
+/// How `WHOWAS <asked>` is answered: one entry, or none.
+///
+/// Modern ("WHOWAS message"): "Servers MUST reply with either
+/// ERR_WASNOSUCHNICK (406) or a non-empty list of WHOWAS entries, both
+/// followed with RPL_ENDOFWHOWAS (369)", and "A WHOWAS entry is a series
+/// of numeric messages starting with RPL_WHOWASUSER (314), optionally
+/// followed by other numerics relevant to that user, such as ...
+/// RPL_WHOISSERVER (312)". The numbers are
+/// ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml; the parameters of
+/// each are that document's `RPL_WHOWASUSER (314)`,
+/// `RPL_WHOISSERVER (312)`, `RPL_ENDOFWHOWAS (369)` and
+/// `ERR_WASNOSUCHNICK (406)`, none of which RFC 2812 gives a `<client>`.
+///
+/// 314 carries what WHOIS 311 carries: the user URI as the realname, the
+/// URI's local part and domain as the hostmask parts, and a literal `*`
+/// before the realname, which "does not mean anything". 312's
+/// `<server info>` stays a description of the server, as it is in WHOIS,
+/// and names in the same breath since when this run has had the nick:
+/// INVENTED, NOT FROM SPEC, and not a bare timestamp, which would read
+/// as when the user was first met (decision mimid-1wgh.143).
+///
+/// The found lines name the nick as this run gave it; 406 and the 369
+/// after it name the nick as the client spelled it, since there is no
+/// other spelling to give. 314's and 312's last parameters go out
+/// without a leading `:`, which [`Out::to_wire`] writes only where the
+/// value is empty, holds a space or starts with a colon: a trailing
+/// parameter is optional when it needs no delimiter, Modern's own ergo
+/// example writes 314 that way, and the WHOIS numerics beside this one
+/// already do.
+fn whowas_lines(server: &str, client: &str, asked: &str, was: Option<&Was>) -> Vec<Out> {
+    let Some(was) = was else {
+        return vec![
+            Out::new(
+                server,
+                "406",
+                vec![
+                    client.to_owned(),
+                    echoed(asked).to_owned(),
+                    "There was no such nickname".to_owned(),
+                ],
+            ),
+            Out::new(
+                server,
+                "369",
+                vec![
+                    client.to_owned(),
+                    echoed(asked).to_owned(),
+                    "End of WHOWAS".to_owned(),
+                ],
+            ),
+        ];
+    };
+    let who = &was.who;
+    vec![
+        Out::new(
+            server,
+            "314",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                who.user.clone(),
+                who.host.clone(),
+                "*".to_owned(),
+                who.uri.clone(),
+            ],
+        ),
+        Out::new(
+            server,
+            "312",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                server.to_owned(),
+                format!(
+                    "mimid-agent; this run has had this nick since {}",
+                    server_time(was.at)
+                ),
+            ],
+        ),
+        Out::new(
+            server,
+            "369",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                "End of WHOWAS".to_owned(),
+            ],
+        ),
+    ]
+}
+
+/// 382 RPL_REHASHING's `<config file>` parameter for the file at `path`,
+/// in the line this connection would be sent it on: the path, or `*`
+/// where the path cannot be written there.
+///
+/// Modern §"RPL_REHASHING (382)" shapes the line `<client> <config file>
+/// :Rehashing`, so the path is a middle parameter: one holding a space
+/// would split into two and push `Rehashing` out of place, one holding
+/// CR or LF would end the line and inject another, and an empty one or
+/// one starting with `:` would be read as the trailing parameter
+/// ([`crate::line::is_middle_param`]). A path that fits the grammar can
+/// still be long enough to carry the whole line past
+/// [`crate::line::MAX_LINE`], where cutting the last parameter would eat
+/// `Rehashing` and leave the path. That decision needs the line and not
+/// the path alone, the server's name and the client's nick being in it,
+/// so it is taken over the built line.
+fn config_file_param(server: &str, client: &str, path: &str, with_tags: bool) -> String {
+    if !crate::line::is_middle_param(path) {
+        return "*".to_owned();
+    }
+    let out = Out::new(
+        server,
+        "382",
+        vec![client.to_owned(), path.to_owned(), "Rehashing".to_owned()],
+    );
+    if out.to_wire(with_tags).len() > crate::line::MAX_LINE {
+        return "*".to_owned();
+    }
+    path.to_owned()
 }
 
 /// Whether CTCP `ctcp` (without its `\x01`s) is an ACTION.
@@ -188,8 +342,22 @@ impl Session {
             "LIST" => self.list(),
             "WHO" => self.who_cmd(line),
             "WHOIS" => self.whois(line),
+            "WHOWAS" => self.whowas(line),
             "ISON" => self.ison(line),
             "USERHOST" => self.userhost(line),
+            // The two IRCv3 verbs (class 1 and class 2 of epic
+            // mimid-1wgh.140, decision mimid-1wgh.146). Neither reads a
+            // credential: both run on a connection that is registered
+            // and so already authenticated, and `crate::register`
+            // answers 451 before that.
+            //
+            // MONITOR reports reachability -- whether a nick's user has
+            // a client in a group this user shares -- because MIMI
+            // defines no presence (`crate::monitor`). It touches the
+            // nicks and the records and never the agent, so it is
+            // answered while a sync holds the agent, as ISON is.
+            "MONITOR" => self.monitor(line),
+            "SETNAME" => self.setname(),
             "AWAY" => {
                 if line.param(0).is_some_and(|m| !m.is_empty()) {
                     self.numeric("306", &["You have been marked as being away"]);
@@ -197,6 +365,15 @@ impl Session {
                     self.numeric("305", &["You are no longer marked as being away"]);
                 }
             }
+            // The three server queries, answered from the agent's own
+            // facts (class 1 of epic mimid-1wgh.140, decision
+            // mimid-1wgh.142). Each runs on a registered and therefore
+            // already authenticated connection, which is why none reads
+            // a credential; and none touches the agent or the store, so
+            // each is answered while a sync holds the agent.
+            "ADMIN" => self.admin(line),
+            "LUSERS" => self.lusers(),
+            "LINKS" => self.links(),
             "MOTD" => self.numeric("422", &["MOTD File is missing"]),
             "KICK" => self.kick(line).await,
             "INVITE" => self.invite(line).await,
@@ -226,7 +403,85 @@ impl Session {
                 }
             }
             "REDACT" => self.redact(line).await,
-            other => self.numeric("421", &[other, "Unknown command"]),
+            // The five verbs mimid knows and cannot apply: one user, and
+            // no server link behind the agent. Each answers the numeric
+            // its own reply list in the Modern IRC Client Protocol
+            // gives, not 421, which Modern §"ERR_UNKNOWNCOMMAND (421)"
+            // defines as a command the server does not know. Decision
+            // mimid-1wgh.141 records why WALLOPS's SHOULD under
+            // §"Optional Messages" is declined, why OPER is not 464
+            // ERR_PASSWDMISMATCH, and why 723 ERR_NOPRIVS fits none of
+            // the four: it is for an operator missing one named
+            // privilege and takes a `<priv>` mimid would invent.
+            //
+            // No parameter is read. Comparing OPER's password would put
+            // a second authorization boundary here, and the one for IRC
+            // is the credential checked before registration ends
+            // (`crate::register`); not reading it also keeps a local
+            // token mistyped as that password out of every variable. So
+            // a bare `OPER` or `WALLOPS` is refused, not answered 461.
+            //
+            // ERR_NOOPERHOST, Modern §"OPER message" and numerics.yml
+            // `ERR_NOOPERHOST`: no operator block exists to match a host
+            // against, so 381 RPL_YOUREOPER is never sent.
+            "OPER" => self.numeric("491", &["No O-lines for your host"]),
+            // ERR_NOPRIVILEGES, Modern §"CONNECT message", §"SQUIT
+            // message", §"KILL message", §"WALLOPS message" and
+            // numerics.yml `ERR_NOPRIVILEGES`. CONNECT and SQUIT act on
+            // a server link. KILL closes another client's connection,
+            // and the user's own other devices go through the service's
+            // `forget-device` (`crate::service`) instead. WALLOPS
+            // reaches every user who set mode `w`, and this user's own
+            // notices already come from the service nick.
+            "CONNECT" | "SQUIT" | "KILL" | "WALLOPS" => {
+                self.numeric("481", &["Permission Denied- You're not an IRC operator"]);
+            }
+            // The one operator verb whose operation a personal daemon
+            // has: mimid-agent is started from a configuration file and
+            // can read it again (class 3 of epic mimid-1wgh.140, §7.38).
+            //
+            // Why this one is not 481 like the five above. There is one
+            // user, that user runs this daemon, and asking it to re-read
+            // its own file escalates nothing. Modern §"RPL_REHASHING
+            // (382)" sends 382 to "an operator which has just
+            // successfully issued a REHASH command", and mimid has no
+            // operator state at all -- no OPER that grants it, no user
+            // mode `o`, no 381 -- so sending 382 treats the single
+            // authenticated user as the operator for this one verb. That
+            // is a deviation from the numeric's prose, and §7.38 records
+            // it.
+            //
+            // It is also why nothing on this path answers 481, which
+            // Modern §"ERR_NOPRIVILEGES (481)" defines as "the command
+            // failed because the user is not an IRC operator". Modern
+            // lets that numeric's text vary, not its condition, so 481
+            // for a REHASH this daemon cannot carry out would tell the
+            // same client it is not an operator that a readable file
+            // tells it is one. A REHASH that read nothing gets a NOTICE
+            // and no 382.
+            //
+            // No credential is read here, and adding one would be a
+            // second authorization boundary: `Session::command` runs
+            // only after registration, and until then `crate::register`
+            // answers 451. What ended registration was the credential
+            // check, or on a tailnet connection the node (§4.6); which
+            // of the two it was is the daemon's rule, not this verb's.
+            "REHASH" => self.rehash(line).await,
+            // ERR_NOPRIVILEGES, Modern §"RESTART message", which lists
+            // 481 as its only numeric and makes the command itself
+            // optional: "it may be viewed as a risk to allow arbitrary
+            // people to connect to a server as an operator and execute
+            // this command, causing (at least) a disruption to service".
+            // mimid declines it on that sentence: a daemon that restarts
+            // on a client's word fights whatever supervises it, and the
+            // operator who wants a restart has their service manager.
+            // The text of the last parameter may vary, so the refusal
+            // says which refusal it is. REHASH carries no such
+            // optionality sentence, which is where the two verbs part.
+            "RESTART" => {
+                self.numeric("481", &["mimid-agent does not restart itself"]);
+            }
+            other => self.numeric("421", &[echoed(other), "Unknown command"]),
         }
     }
 
@@ -262,7 +517,13 @@ impl Session {
                 // docs/irc-lessons.md "Answer a JOIN under the name it
                 // asked for").
                 let me = self.me();
-                self.send(&Out::new(&me.mask(), "JOIN", vec![target.to_owned()]));
+                let out = crate::render::join_line(
+                    &me,
+                    target,
+                    self.caps.extended_join,
+                    self.caps.account_tag,
+                );
+                self.send(&out);
                 self.part_own(target, "accepted");
             }
             return;
@@ -1020,9 +1281,52 @@ impl Session {
                 self.numeric("318", &[&who.nick, "End of /WHOIS list"]);
                 return;
             }
-            _ => self.numeric("401", &[&nick, "No such nick/channel"]),
+            _ => self.numeric("401", &[echoed(&nick), "No such nick/channel"]),
         }
-        self.numeric("318", &[&nick, "End of /WHOIS list"]);
+        self.numeric("318", &[echoed(&nick), "End of /WHOIS list"]);
+    }
+
+    /// `WHOWAS <nick> [<count>]`: which MIMI user the nick stands for
+    /// and since when, class 1 of epic mimid-1wgh.140 (decision
+    /// mimid-1wgh.143; ~/PROJECT/IETF/specs/ircdocs-modern.html, "WHOWAS
+    /// message").
+    ///
+    /// Modern says WHOWAS "asks for information about a nickname which
+    /// no longer exists". No nick here ever stops existing: it is
+    /// derived from the user URI, given once and never released
+    /// ([`crate::names`]), so mimid answers for a nick that is still in
+    /// use, which is its own deviation from that sentence and the only
+    /// reading with anything true to say.
+    ///
+    /// `<count>` is accepted and not read. There is at most one entry
+    /// per nick, so the reply is one entry or none, which is what every
+    /// value of `<count>` asks for: a positive count is at least one,
+    /// and anything else is "a full search" (Modern "WHOWAS message";
+    /// RFC 2812 §3.6.3, "If a non-positive number is passed as being
+    /// `<count>`, then a full search is done"), which is that same one
+    /// entry. RFC 2812's `<target>` is not read either: there is no
+    /// other server to ask.
+    ///
+    /// Only one nick is read, Modern's `<nick>`, not RFC 2812's comma
+    /// list: `WHOWAS a,b` asks about the nick `a,b`, which is no nick,
+    /// and is answered 406.
+    fn whowas(&mut self, line: &Line) {
+        // Modern: "If the <nick> argument is missing, they SHOULD send a
+        // single reply, using either ERR_NONICKNAMEGIVEN (431) or
+        // ERR_NEEDMOREPARAMS (461)". 431 is what WHOIS above sends, and
+        // a single reply means no 369 after it.
+        let Some(nick) = whowas_nick(line).map(str::to_owned) else {
+            self.numeric("431", &["No nickname given"]);
+            return;
+        };
+        // The guard is gone before anything is written: nothing under it
+        // is needed to render, and a send must never hold it.
+        let was = self.shared.names().whowas(&nick);
+        let client = self.target();
+        let server = self.shared.server.clone();
+        for out in whowas_lines(&server, &client, &nick, was.as_ref()) {
+            self.send(&out);
+        }
     }
 
     /// `METADATA <target> GET identity`, and a refusal for anything that
@@ -1154,6 +1458,190 @@ impl Session {
         self.numeric("302", &[&replies.join(" ")]);
     }
 
+    /// `SETNAME`: refused, always, with `FAIL SETNAME
+    /// CANNOT_CHANGE_REALNAME` (~/PROJECT/IETF/specs/ircv3-setname.md:84-89,
+    /// "If the server rejects the change for any other reason, it MUST
+    /// send a `FAIL` message with the `CANNOT_CHANGE_REALNAME` code and
+    /// an appropriate description of the reason").
+    ///
+    /// There is nothing for the command to change. The realname this
+    /// front end reports is the user URI itself, in 352's last parameter
+    /// and in 311's, and MIMI carries no display name a client may set:
+    /// protocol-07's only profile is the `UserProfile` a provider's
+    /// identity service returns for an `identifierQuery`, room-policy-04
+    /// names "Nickname" in its terminology alone, and mimi-content-10
+    /// carries no name for a sender. So a `SETNAME` asks to change the
+    /// identity the provider authenticates, and the only other reading --
+    /// a name this one connection reports to itself -- tells the user
+    /// something no peer will ever see. Decision mimid-1wgh.146 records
+    /// both readings; the `setname` capability is never advertised, and
+    /// no `NAMELEN` token with it, which is what lets the command be
+    /// refused at all (:28-37).
+    ///
+    /// INVALID_REALNAME (:79-82) is not used: the refusal is not about
+    /// the value sent, and is the same for every value, so the parameter
+    /// is not read and a bare `SETNAME` is not 461 either. This declines
+    /// :32-34's SHOULD ("the server SHOULD handle it silently (with no
+    /// response), as historic implementations did"): a user who types
+    /// `/setname` and is answered with silence cannot tell it from
+    /// success, and the FAIL carries the spec's own code, so a client
+    /// that knows `setname` shows the reason.
+    fn setname(&mut self) {
+        let server = self.shared.server.clone();
+        self.send_cut(Out::new(
+            &server,
+            "FAIL",
+            vec![
+                "SETNAME".to_owned(),
+                "CANNOT_CHANGE_REALNAME".to_owned(),
+                "your realname here is your MIMI user URI, which only your provider sets"
+                    .to_owned(),
+            ],
+        ));
+    }
+
+    /// ADMIN: who runs this agent and how to reach them, in the four
+    /// replies the Modern IRC Client Protocol §"ADMIN message" names --
+    /// 256 RPL_ADMINME, 257 RPL_ADMINLOC1, 258 RPL_ADMINLOC2 and 259
+    /// RPL_ADMINEMAIL, whose numbers and parameters come from Modern's
+    /// own numerics section and not from RFC 2812.
+    ///
+    /// A `<target>` is answered only when it names this server: `*`, the
+    /// configured server name, the user's own nick or [`SERVICE_NICK`],
+    /// which are the only clients connected here. Any other name is 402
+    /// ERR_NOSUCHSERVER, another wildcard included, because Modern makes
+    /// a client target mean the server that client is connected to and
+    /// every other nick this front end knows belongs to someone at a
+    /// provider, who is connected to no server of mimid's.
+    ///
+    /// The text of 257, 258 and 259 is INVENTED, NOT FROM SPEC: Modern
+    /// says the last parameter of all three varies wildly. 259 carries
+    /// the user's MIMI address where Modern requires an email address,
+    /// which is the one MUST this crate does not meet (see its
+    /// `# Limitations`). Decision mimid-1wgh.142 carries that reading,
+    /// why an empty parameter is no target, and why no mask is matched.
+    fn admin(&mut self, line: &Line) {
+        let me = self.me();
+        let server = self.shared.server.clone();
+        if let Some(target) = line.param(0).filter(|target| !target.is_empty())
+            && target != "*"
+            && !target.eq_ignore_ascii_case(&server)
+            && fold(target) != fold(&me.nick)
+            && fold(target) != SERVICE_NICK
+        {
+            self.numeric("402", &[echoed(target), "No such server"]);
+            return;
+        }
+        // 256's `<server>` is optional and goes out as a middle
+        // parameter, before the text Modern lets a server vary.
+        self.numeric("256", &[&server, "Administrative info"]);
+        self.numeric_cut("257", &[&format!("The mimid agent of {}", me.uri)]);
+        self.numeric_cut(
+            "258",
+            &[&format!(
+                "Run by its own user; {} serves this user's identity, not this agent",
+                me.host
+            )],
+        );
+        self.numeric_cut(
+            "259",
+            &[&format!(
+                "{}@{} (a MIMI address, not an email address)",
+                me.user, me.host
+            )],
+        );
+    }
+
+    /// LUSERS: this user, their clients and their channels, in the seven
+    /// numerics Modern §"LUSERS message" lists. That section makes 251
+    /// RPL_LUSERCLIENT and 255 RPL_LUSERME a MUST and 252 RPL_LUSEROP,
+    /// 253 RPL_LUSERUNKNOWN, 254 RPL_LUSERCHANNELS, 265 RPL_LOCALUSERS
+    /// and 266 RPL_GLOBALUSERS a SHOULD; 265 and 266 carry the two
+    /// optional parameters their own numerics make a further SHOULD.
+    /// Modern gives the command "Parameters: None", so nothing the
+    /// client sent is read: RFC 2812's `<mask>` and `<target>` are not
+    /// this command, and reading them would answer 461 or 402 where
+    /// Modern defines no parameter at all.
+    ///
+    /// Which number each one is, and why it is the truthful one here
+    /// (decision mimid-1wgh.142):
+    ///
+    /// - 251: one user, who is invisible, since `MODE <own nick>` answers
+    ///   `221 +i` and 004 advertises `i` as the one user mode; and zero
+    ///   *other* servers, which is Modern's word. meshIRCd counts itself
+    ///   there (`main.go:1676`), so a script written against it reads 0
+    ///   here.
+    /// - 252: no IRC operator exists, which is what a server that
+    ///   answers OPER with 491 must say (decision mimid-1wgh.141).
+    /// - 253: the connections admitted under the agent's caps that have
+    ///   not logged in
+    ///   ([`mimid_agent_store::credentials::limits::Limiter::unauthenticated`]),
+    ///   which is Modern's "unknown state". One that has logged in is in
+    ///   255 instead and in neither for no observable instant: its place
+    ///   under the caps is given up and its place in the registry taken
+    ///   in one turn, with no await between (`crate::register`).
+    /// - 254: the channels this connection shows. A channel exists on
+    ///   this server exactly when a room the user is in has a channel
+    ///   name, and a one-to-one room is a query with no channel name
+    ///   ([`crate::names`]), so it is not counted; LIST walks the same
+    ///   set.
+    /// - 255, 265 and 266: the registered connections of this front end,
+    ///   which is the user's own clients and the multi-device fact IRC
+    ///   has no other place for, with the most seen at one time since
+    ///   the daemon started. There is no server link, so global is
+    ///   local and 266 repeats 265.
+    ///
+    /// 252, 253 and 254 can be 0 where Modern calls each a positive
+    /// integer, and 251 and 255 keep Modern's sentence, which reads "1
+    /// users" for one user: the numbers are in no separate parameter
+    /// there, and the section says a client SHOULD NOT parse that text.
+    fn lusers(&mut self) {
+        let clients = self.shared.session_count().to_string();
+        let peak = self.shared.peak_sessions().to_string();
+        let unknown = self.shared.credentials.limiter().unauthenticated();
+        let channels = self.channels.len();
+        self.numeric("251", &["There are 1 users and 1 invisible on 0 servers"]);
+        self.numeric("252", &["0", "operator(s) online"]);
+        self.numeric("253", &[&unknown.to_string(), "unknown connection(s)"]);
+        self.numeric("254", &[&channels.to_string(), "channels formed"]);
+        self.numeric("255", &[&format!("I have {clients} clients and 0 servers")]);
+        self.numeric(
+            "265",
+            &[
+                &clients,
+                &peak,
+                &format!("Current local users {clients}, max {peak}"),
+            ],
+        );
+        self.numeric(
+            "266",
+            &[
+                &clients,
+                &peak,
+                &format!("Current global users {clients}, max {peak}"),
+            ],
+        );
+    }
+
+    /// LINKS: this server, alone. Modern §"LINKS message" requires zero
+    /// or more 364 RPL_LINKS and then one 365 RPL_ENDOFLINKS, and says a
+    /// server MAY omit any server on the network, itself included, so
+    /// one self-entry is a correct answer for a network of one and the
+    /// way a client learns there is none. Its shape is that section's
+    /// own reply example: `<server1>` and `<server2>` are this server
+    /// and the hopcount is 0, with the server info WHOIS 312 sends.
+    /// 365's first parameter is the literal `*` its numeric gives.
+    ///
+    /// The provider and every peer are left out: they are not IRC
+    /// servers, and naming them would describe mimid's topology to
+    /// anything that asks (bead mimid-1wgh.140.1). Modern gives the
+    /// command "Parameters: None", so nothing the client sent is read.
+    fn links(&mut self) {
+        let server = self.shared.server.clone();
+        self.numeric("364", &[&server, &server, "0 mimid-agent"]);
+        self.numeric("365", &["*", "End of /LINKS list"]);
+    }
+
     async fn kick(&mut self, line: &Line) {
         let (Some(channel), Some(nicks)) = (line.param(0), line.param(1)) else {
             self.numeric("461", &["KICK", "Not enough parameters"]);
@@ -1214,5 +1702,231 @@ impl Session {
                 self.server_notice(&format!("mimid: inviting {nick} to {channel}: {error}"))
             }
         }
+    }
+
+    /// REHASH: reads the daemon's configuration file again and says what
+    /// it could and could not apply (§7.38; bead mimid-1wgh.140.4).
+    ///
+    /// Modern §"REHASH message" gives the command "Parameters: None" and
+    /// has no MUST in it, so what is sent and in what order is this
+    /// daemon's choice: a NOTICE naming each setting that changed, then
+    /// 382 RPL_REHASHING last, when the work is already done. 382 is
+    /// therefore a report and not a promise, and a reload that read
+    /// nothing -- no file, a file that will not parse, a target that is
+    /// not this server -- sends the NOTICE alone. The NOTICEs are
+    /// mimid's own: INVENTED, NOT FROM SPEC, since Modern defines only
+    /// 382 and 481 here.
+    ///
+    /// Each NOTICE names the setting and never its value. A value in
+    /// `[tls.acme.acme_dns] password` is a secret whose type redacts its
+    /// own `Debug`, and a line built as `key = value` would carry it
+    /// past that redaction onto a wire that may be cleartext (decision
+    /// mimid-1wgh.92) and into the log.
+    ///
+    /// Modern's "Servers MAY accept, as an optional argument, the name of
+    /// a remote server that should be rehashed instead of the current
+    /// one" is a MAY, and this one does not: there is no network behind
+    /// the port (`LINKS` lists this server alone). A parameter naming
+    /// something else is refused rather than read as this server, which
+    /// is what AGENTS.md's "reject bad input rather than guessing" asks
+    /// and what `ADMIN` does with the same target. It is a NOTICE and
+    /// not the 402 `ADMIN` sends, because 402 is not among the two
+    /// numerics Modern gives this command.
+    async fn rehash(&mut self, line: &Line) {
+        let server = self.shared.server.clone();
+        if let Some(target) = line.param(0).filter(|target| !target.is_empty())
+            && target != "*"
+            && !target.eq_ignore_ascii_case(&server)
+        {
+            self.server_notice(&format!(
+                "REHASH: {server} rehashes itself only; it has no link to another server"
+            ));
+            return;
+        }
+        let Some(reload) = self.shared.reload() else {
+            self.server_notice(
+                "REHASH: this daemon was not started from a configuration file, \
+                 so there is nothing to read again",
+            );
+            return;
+        };
+        let path = reload.config_file();
+        let done = reload.reload().await;
+        if let Some(why) = &done.failed {
+            self.server_notice_cut(&format!(
+                "REHASH: {why}; every setting in use is what it was"
+            ));
+            return;
+        }
+        if done.applied.is_empty() && done.needs_restart.is_empty() {
+            self.server_notice_cut(&format!("REHASH: {path} has not changed"));
+        }
+        // One line per setting, so the output is proportional to what
+        // changed and no line has to be cut: the count is bounded by the
+        // configuration's keys and each name is short.
+        for key in &done.applied {
+            self.server_notice(&format!("REHASH: {key} is now in use"));
+        }
+        for key in &done.needs_restart {
+            self.server_notice(&format!(
+                "REHASH: {key} changed in the file and needs a restart to take effect"
+            ));
+        }
+        let shown = config_file_param(
+            &self.shared.server,
+            &self.target(),
+            &path,
+            self.caps.message_tags,
+        );
+        if shown == "*" {
+            // The path cannot be a middle parameter, so it goes where a
+            // space or a colon is allowed and CR and LF are taken out
+            // (`one_line`).
+            self.server_notice_cut(&format!("REHASH: the configuration file is {path}"));
+        }
+        self.numeric("382", &[&shown, "Rehashing"]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::names::Identity;
+
+    fn was(at: u64) -> Was {
+        Was {
+            who: Identity {
+                uri: "mimi://example.com/u/someone".to_owned(),
+                nick: "someone".to_owned(),
+                user: "someone".to_owned(),
+                host: "example.com".to_owned(),
+            },
+            at,
+        }
+    }
+
+    /// Oracle: the Reply Examples of Modern's "WHOWAS message", whose
+    /// no-such-nick pair is taken byte for byte with the server name
+    /// substituted, and the parameters of `RPL_WHOWASUSER (314)`,
+    /// `RPL_WHOISSERVER (312)`, `RPL_ENDOFWHOWAS (369)` and
+    /// `ERR_WASNOSUCHNICK (406)`
+    /// (~/PROJECT/IETF/specs/ircdocs-modern.html,
+    /// ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml).
+    ///
+    /// 314's and 312's last parameters carry no `:`, which the examples
+    /// show both ways (inspircd writes `:Realname`, ergo `Realname`):
+    /// the delimiter is optional where the value needs none, and
+    /// `Out::to_wire` writes it only where it does. The time is the
+    /// fixture's own field, never the clock.
+    #[test]
+    fn whowas_lines_match_moderns_reply_examples() {
+        let found = whowas_lines("server.example", "val", "someone", Some(&was(1_500)));
+        let wire: Vec<String> = found.iter().map(|o| o.to_wire(false)).collect();
+        assert_eq!(
+            wire,
+            [
+                ":server.example 314 val someone someone example.com * mimi://example.com/u/someone\r\n",
+                ":server.example 312 val someone server.example :mimid-agent; this run has had this nick since 1970-01-01T00:00:01.500Z\r\n",
+                ":server.example 369 val someone :End of WHOWAS\r\n",
+            ]
+        );
+
+        let missing = whowas_lines("server.example", "val", "someone", None);
+        let wire: Vec<String> = missing.iter().map(|o| o.to_wire(false)).collect();
+        assert_eq!(
+            wire,
+            [
+                ":server.example 406 val someone :There was no such nickname\r\n",
+                ":server.example 369 val someone :End of WHOWAS\r\n",
+            ]
+        );
+    }
+
+    /// Oracle: Modern's "WHOWAS message" gives "Parameters: `<nick>
+    /// [<count>]`", so the nick is the first parameter. WHOIS beside it
+    /// reads `params.last()`, which would make `WHOWAS someone 2` ask
+    /// about the nick "2".
+    #[test]
+    fn whowas_reads_the_nick_from_its_first_parameter() {
+        for (line, nick) in [
+            ("WHOWAS someone", Some("someone")),
+            ("WHOWAS someone 2", Some("someone")),
+            ("WHOWAS someone 2 *.edu", Some("someone")),
+            ("WHOWAS :someone", Some("someone")),
+            ("WHOWAS Someone -1", Some("Someone")),
+            // One nick, not RFC 2812's list: this is a nick no run gave.
+            ("WHOWAS a,b", Some("a,b")),
+            ("WHOWAS", None),
+            ("WHOWAS :", None),
+        ] {
+            let parsed = crate::line::parse(line).expect("a verb and its parameters");
+            assert_eq!(whowas_nick(&parsed), nick, "{line}");
+        }
+    }
+
+    /// Oracle: Modern's `RPL_ENDOFWHOWAS (369)` marks the end of the
+    /// reply for the nickname `<nick>` and comes after every other
+    /// WHOWAS numeric. The found lines carry the nick as the daemon gave it;
+    /// 406 carries the spelling the client sent, which is all there is.
+    #[test]
+    fn every_whowas_reply_ends_369_and_names_one_nick() {
+        let found = whowas_lines("server.example", "val", "SOMEONE", Some(&was(0)));
+        let codes: Vec<&str> = found.iter().map(|o| o.command.as_str()).collect();
+        assert_eq!(codes, ["314", "312", "369"]);
+        for out in &found {
+            assert_eq!(out.params[1], "someone", "{}", out.to_wire(false));
+        }
+
+        let missing = whowas_lines("server.example", "val", "SOMEONE", None);
+        let codes: Vec<&str> = missing.iter().map(|o| o.command.as_str()).collect();
+        assert_eq!(codes, ["406", "369"]);
+        for out in &missing {
+            assert_eq!(out.params[1], "SOMEONE", "{}", out.to_wire(false));
+        }
+    }
+    /// Oracle: `RPL_REHASHING (382)`'s shape `<client> <config file>
+    /// :Rehashing` and the parameter grammar of Modern §"Parameters",
+    /// with its 512-octet line (§"Message Format"), written out by hand.
+    /// A configured path is not this crate's to bound, so each class the
+    /// grammar refuses becomes `*`, and so does one that fits the
+    /// grammar and not the line.
+    #[test]
+    fn a_config_path_that_cannot_be_one_parameter_is_sent_as_a_star() {
+        let param = |path: &str| config_file_param("mimid.invalid", "alice-a", path, false);
+        assert_eq!(param("/etc/mimid/agent.toml"), "/etc/mimid/agent.toml");
+        for path in [
+            "",
+            "/etc/my config.toml",
+            "/etc/a\rb.toml",
+            "/etc/a\nb.toml",
+            "/etc/a\0b.toml",
+            ":/etc/mimid.toml",
+        ] {
+            assert_eq!(param(path), "*", "{path:?}");
+        }
+        // The line and not the path decides the length: `:mimid.invalid
+        // 382 alice-a ` and the trailing `Rehashing\r\n` are in the
+        // budget too, so the longest path that fits is shorter than 512.
+        let prefix = ":mimid.invalid 382 alice-a ".len();
+        let suffix = " Rehashing\r\n".len();
+        let fits = "a".repeat(crate::line::MAX_LINE - prefix - suffix);
+        assert_eq!(param(&fits), fits);
+        let one_too_many = "a".repeat(fits.len() + 1);
+        assert_eq!(param(&one_too_many), "*");
+        // The path the grammar and the limit both allow really is one
+        // parameter of the line sent.
+        let out = Out::new(
+            "mimid.invalid",
+            "382",
+            vec![
+                "alice-a".to_owned(),
+                param("/etc/mimid/agent.toml"),
+                "Rehashing".to_owned(),
+            ],
+        );
+        assert_eq!(
+            out.to_wire(false),
+            ":mimid.invalid 382 alice-a /etc/mimid/agent.toml Rehashing\r\n"
+        );
     }
 }

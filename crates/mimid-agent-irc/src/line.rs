@@ -22,6 +22,32 @@ pub const MAX_CLIENT_TAGS: usize = 8191;
 /// The most parameters read from one line (RFC 1459 §2.3.1).
 pub const MAX_PARAMS: usize = 15;
 
+/// The octets no parameter may hold, whichever one it is: `middle` is
+/// `nospcrlfcl *( ":" / nospcrlfcl )` and `trailing` is `*( ":" / " " /
+/// nospcrlfcl )`, and `nospcrlfcl` is "any character except NUL, CR, LF,
+/// colon and SPACE" (Modern §"Parameters"). [`Out::to_wire`] writes a
+/// space for each of these in a last parameter and `*` for a middle one
+/// that holds any.
+const FORBIDDEN: [char; 3] = ['\r', '\n', '\0'];
+
+/// The longest name a client sent that this crate writes back into a
+/// parameter that is not the last one.
+///
+/// A reply that says a name is not here echoes the name so that a client
+/// can tell which request it answers. No name longer than the longest
+/// this daemon could have issued -- a nick, a channel, or a user URI --
+/// names anything here, so a longer one is answered with `*`: it tells
+/// the client nothing a cut name would, and the reply has to fit
+/// [`MAX_LINE`], which [`Out::cut_to_room`] cannot arrange for a
+/// parameter that is not the last one without changing which parameter
+/// it is.
+pub const MAX_ECHO: usize = crate::names::MAX_ACCOUNT;
+
+const _: () = assert!(
+    MAX_ECHO >= crate::names::NICKLEN && MAX_ECHO >= crate::names::CHANNELLEN,
+    "every name this daemon can issue must be short enough to echo back"
+);
+
 /// A line a client sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
@@ -167,7 +193,8 @@ pub fn escape_tag_value(value: &str) -> String {
 /// A line the server writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Out {
-    /// Tags, written only to a client with message-tags on.
+    /// Tags, written to a client that takes them
+    /// (`crate::conn::Caps::takes_tag`).
     pub tags: Vec<(String, String)>,
     /// The source: the server's name or a hostmask.
     pub source: String,
@@ -197,12 +224,21 @@ impl Out {
     }
 
     /// The line on the wire, CR-LF included; tags only if `with_tags`.
+    ///
+    /// The server's own tags are written before the client-only ones
+    /// (those whose key starts with `+`), whatever order the caller
+    /// built them in: "Any server-sent tags attached to messages MUST be
+    /// included before client-only tags to prevent them from being
+    /// pushed outside of the byte limit"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Client-only tags").
     #[must_use]
     pub fn to_wire(&self, with_tags: bool) -> String {
         let mut out = String::new();
         if with_tags && !self.tags.is_empty() {
             out.push('@');
-            for (i, (key, value)) in self.tags.iter().enumerate() {
+            let server = self.tags.iter().filter(|(key, _)| !key.starts_with('+'));
+            let client_only = self.tags.iter().filter(|(key, _)| key.starts_with('+'));
+            for (i, (key, value)) in server.chain(client_only).enumerate() {
                 if i > 0 {
                     out.push(';');
                 }
@@ -221,10 +257,26 @@ impl Out {
         let last = self.params.len().saturating_sub(1);
         for (i, param) in self.params.iter().enumerate() {
             out.push(' ');
-            if i == last && (param.is_empty() || param.contains(' ') || param.starts_with(':')) {
-                out.push(':');
+            if i == last {
+                if param.contains(FORBIDDEN) {
+                    // Replacing them leaves a space, so the parameter
+                    // needs its `:` whether or not it held one before.
+                    out.push(':');
+                    out.push_str(&param.replace(FORBIDDEN, " "));
+                } else {
+                    if param.is_empty() || param.contains(' ') || param.starts_with(':') {
+                        out.push(':');
+                    }
+                    out.push_str(param);
+                }
+            } else if is_middle_param(param) {
+                out.push_str(param);
+            } else {
+                // Nothing the wire can carry here: the value would end
+                // the line, split it, shift the parameters after it, or
+                // be read back as the last one.
+                out.push('*');
             }
-            out.push_str(param);
         }
         out.push_str("\r\n");
         out
@@ -234,7 +286,13 @@ impl Out {
     /// included if `with_tags`, fits [`MAX_LINE`]: for peer text that is
     /// shown on one line only (a topic).
     pub fn cut_to_fit(&mut self, with_tags: bool) {
-        let room = self.room_for_trailing(with_tags);
+        self.cut_to_room(self.room_for_trailing(with_tags));
+    }
+
+    /// Cuts the last parameter on a UTF-8 boundary to `room` octets: for
+    /// a caller that worked out the room itself, the tags a given client
+    /// takes counted in (`Session::room_for`).
+    pub fn cut_to_room(&mut self, room: usize) {
         if let Some(last) = self.params.last_mut()
             && last.len() > room
         {
@@ -256,6 +314,39 @@ impl Out {
             last.clear();
         }
         MAX_LINE.saturating_sub(empty.to_wire(with_tags).len())
+    }
+}
+
+/// Whether `text` can be sent as a parameter that is not the last one.
+///
+/// The Modern IRC Client Protocol §"Parameters" writes a middle
+/// parameter as `nospcrlfcl *( ":" / nospcrlfcl )`, where `nospcrlfcl`
+/// is any character but NUL, CR, LF, `:` and SPACE, and requires a
+/// parameter that holds a space, is empty or begins with `:` to be sent
+/// as the last one with a `:` before it. A colon anywhere after the
+/// first octet is part of one token and passes.
+///
+/// This is the grammar and not what [`Out::to_wire`] gets away with:
+/// that writes the `:` for the last parameter only, and so never has to
+/// decide about the CR, LF or NUL that no middle parameter may carry.
+#[must_use]
+pub fn is_middle_param(text: &str) -> bool {
+    !text.is_empty() && !text.starts_with(':') && !text.contains([' ', '\r', '\n', '\0'])
+}
+
+/// `text`, to be written back as a parameter that is not the last one,
+/// or `*` where it cannot be: longer than [`MAX_ECHO`], or refused by
+/// the grammar ([`is_middle_param`]).
+///
+/// [`Out::to_wire`] already answers the grammar with `*`, so this is the
+/// length bound and the one place a caller states that the value came
+/// from the client.
+#[must_use]
+pub fn echoed(text: &str) -> &str {
+    if text.len() <= MAX_ECHO && is_middle_param(text) {
+        text
+    } else {
+        "*"
     }
 }
 
@@ -287,16 +378,30 @@ pub fn split_text(text: &str, max: usize) -> Vec<&str> {
 /// gets a line of its own.
 #[must_use]
 pub fn pack_words(words: &[String], room: usize) -> Vec<String> {
+    pack(words, room, ' ')
+}
+
+/// Packs `items` into lines of at most `room` octets each, `sep` between
+/// items; an item longer than `room` gets a line of its own.
+///
+/// `sep` is `' '` for a space-separated list (353 NAMES, CAP LS) and
+/// `','` for a comma-separated one (730 to 734, whose lists the IRCv3
+/// Monitor spec writes `target[,target2]*` and bounds only by the 512
+/// octets of the line). Together the lines hold every item once, in
+/// order.
+#[must_use]
+pub fn pack(items: &[String], room: usize, sep: char) -> Vec<String> {
+    let sep_len = sep.len_utf8();
     let mut lines = Vec::new();
     let mut line = String::new();
-    for word in words {
-        if !line.is_empty() && line.len() + 1 + word.len() > room {
+    for item in items {
+        if !line.is_empty() && line.len() + sep_len + item.len() > room {
             lines.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
-            line.push(' ');
+            line.push(sep);
         }
-        line.push_str(word);
+        line.push_str(item);
     }
     if !line.is_empty() {
         lines.push(line);
@@ -396,6 +501,38 @@ mod tests {
         );
     }
 
+    /// Oracle: ~/PROJECT/IETF/specs/ircv3-message-tags.md, "Client-only
+    /// tags": "Any server-sent tags attached to messages MUST be
+    /// included before client-only tags to prevent them from being
+    /// pushed outside of the byte limit."
+    ///
+    /// A caller adds tags in the order its own line reads best —
+    /// `msgid`, then the client-only `+draft/reply`, then `time` and
+    /// `account` for every line of a split message — so the order is
+    /// settled here and not at each call.
+    #[test]
+    fn server_tags_are_written_before_client_only_tags() {
+        let out = Out::new("s.x", "PRIVMSG", vec!["#c".into(), "hi".into()])
+            .tag("msgid", "01J")
+            .tag("+draft/reply", "01H")
+            .tag("time", "2026-11-28T00:00:00.000Z")
+            .tag("account", "mimi://a.example/u/alice");
+        assert_eq!(
+            out.to_wire(true),
+            "@msgid=01J;time=2026-11-28T00:00:00.000Z;account=mimi://a.example/u/alice;\
+             +draft/reply=01H :s.x PRIVMSG #c hi\r\n"
+        );
+        // The room for the text counts the same octets, wherever the
+        // tags were added.
+        assert_eq!(
+            out.room_for_trailing(true),
+            MAX_LINE
+                - "@msgid=01J;time=2026-11-28T00:00:00.000Z;account=mimi://a.example/u/alice;\
+                   +draft/reply=01H :s.x PRIVMSG #c :\r\n"
+                    .len()
+        );
+    }
+
     #[test]
     fn text_splits_on_character_boundaries_and_joins_back() {
         let text = "aé€😀b";
@@ -426,6 +563,33 @@ mod tests {
         assert!(pack_words(&[], 10).is_empty());
     }
 
+    /// Oracle: ircv3-monitor.md:56-58 ("the length of the target list is
+    /// limited only by the buffer size of 512 chars") and :107, :121,
+    /// :133, :146, whose lists are `target[,target2]*`. A 730 or 731 over
+    /// the limit is cut by the client into a nick that is not the one
+    /// sent, so the separator has to be the comma and every line has to
+    /// fit the room.
+    #[test]
+    fn items_pack_into_comma_lists_within_the_room() {
+        let items: Vec<String> = ["aa", "bbb", "c", "dddd"]
+            .iter()
+            .map(|w| (*w).to_owned())
+            .collect();
+        assert_eq!(pack(&items, 6, ','), ["aa,bbb", "c,dddd"]);
+        assert_eq!(pack(&items, 3, ','), ["aa", "bbb", "c", "dddd"]);
+        assert_eq!(pack(&items, 100, ','), ["aa,bbb,c,dddd"]);
+        assert!(pack(&[], 10, ',').is_empty());
+        // Every line fits, and the lines hold the items once each, in
+        // order.
+        let many: Vec<String> = (0..100).map(|n| format!("nick-{n}")).collect();
+        let lines = pack(&many, 40, ',');
+        assert!(lines.len() > 1, "{lines:?}");
+        for line in &lines {
+            assert!(line.len() <= 40, "{line:?}");
+        }
+        assert_eq!(lines.join(",").split(',').collect::<Vec<_>>(), many);
+    }
+
     /// Oracle: docs/irc-lessons.md "Writing": a line is at most 512
     /// octets; a topic longer than that is cut on a UTF-8 boundary.
     #[test]
@@ -451,5 +615,131 @@ mod tests {
         let mut short = Out::new("s", "TOPIC", vec!["#c".to_owned(), "hi".to_owned()]);
         short.cut_to_fit(true);
         assert_eq!(short.params[1], "hi");
+    }
+    /// Oracle: the Modern IRC Client Protocol §"Parameters", written out
+    /// by hand -- `nospcrlfcl` is "any characters except NUL, CR, LF,
+    /// colon (`:`) and SPACE", `middle ::= nospcrlfcl *( ":" /
+    /// nospcrlfcl )`, and "Parameters that contain spaces, are empty, or
+    /// begin with a `':'` character MUST be sent with a preceding
+    /// `':'`", which only the last parameter may have.
+    #[test]
+    fn is_middle_param_rejects_what_a_middle_parameter_cannot_hold() {
+        for text in [
+            "",
+            ":leading",
+            "two words",
+            "line\rbreak",
+            "line\nbreak",
+            "nul\0byte",
+            " ",
+            ":",
+        ] {
+            assert!(!is_middle_param(text), "{text:?}");
+        }
+        // A colon past the first octet is one token, and so is anything
+        // else the grammar does not name: a zero-width character is a
+        // path's business, not the wire's.
+        for text in [
+            "/etc/mimid.toml",
+            "a:b",
+            "a::",
+            "/home/\u{200b}/mimid.toml",
+            "\u{fffd}",
+        ] {
+            assert!(is_middle_param(text), "{text:?}");
+        }
+        // What passes goes out as one middle parameter and is read back
+        // as one. The `:` before a last parameter that needs none is
+        // optional (§"Parameters"), and `Out::to_wire` leaves it off.
+        let out = Out::new(
+            "s",
+            "382",
+            vec!["val".to_owned(), "a:b".to_owned(), "Rehashing".to_owned()],
+        );
+        assert_eq!(out.to_wire(false), ":s 382 val a:b Rehashing\r\n");
+        assert_eq!(
+            parse("382 val a:b Rehashing").unwrap().params,
+            ["val", "a:b", "Rehashing"]
+        );
+    }
+
+    /// Oracle: the Modern IRC Client Protocol §"Parameters", written out
+    /// by hand. `middle` is `nospcrlfcl *( ":" / nospcrlfcl )` and
+    /// `trailing` is `*( ":" / " " / nospcrlfcl )`, so NUL, CR and LF
+    /// belong to no parameter at all, and a value that holds a space, is
+    /// empty or begins with `:` may only be the last one.
+    ///
+    /// A caller that hands such a value to a parameter that is not the
+    /// last one has nothing the wire can carry, so `*` goes out instead
+    /// of a line that would split, shift the parameters after it, or
+    /// carry an octet RFC 1459 §2.3 forbids.
+    #[test]
+    fn no_parameter_goes_out_holding_what_the_grammar_refuses() {
+        for refused in [
+            "",
+            ":leading",
+            "two words",
+            "a\rb",
+            "a\nb",
+            "a\0b",
+            " ",
+            ":",
+        ] {
+            let out = Out::new(
+                "s",
+                "402",
+                vec![
+                    "val".to_owned(),
+                    refused.to_owned(),
+                    "No such server".to_owned(),
+                ],
+            );
+            assert_eq!(
+                out.to_wire(false),
+                ":s 402 val * :No such server\r\n",
+                "{refused:?}"
+            );
+        }
+        // The last parameter may hold a space and a colon, and does; CR,
+        // LF and NUL are not its to hold either, and become spaces, as
+        // the text around them is still the text.
+        let trailing = |text: &str| {
+            Out::new("s", "NOTICE", vec!["val".to_owned(), text.to_owned()]).to_wire(false)
+        };
+        assert_eq!(trailing("two words"), ":s NOTICE val :two words\r\n");
+        assert_eq!(trailing(":x"), ":s NOTICE val ::x\r\n");
+        assert_eq!(trailing("a\r\nQUIT"), ":s NOTICE val :a  QUIT\r\n");
+        assert_eq!(trailing("a\0b"), ":s NOTICE val :a b\r\n");
+        // Every line still ends with exactly one CR-LF.
+        for text in ["a\rb", "a\nb", "a\r\nb", "plain"] {
+            let wire = trailing(text);
+            assert_eq!(wire.matches("\r\n").count(), 1, "{text:?} -> {wire:?}");
+        }
+    }
+
+    /// Oracle: [`MAX_ECHO`] against [`MAX_LINE`] -- a name longer than
+    /// the longest this daemon could have issued is answered with `*`,
+    /// because a parameter that is not the last one cannot be cut to fit
+    /// the line without changing which parameter it is.
+    #[test]
+    fn a_name_too_long_to_echo_is_answered_with_a_star() {
+        let longest = "n".repeat(MAX_ECHO);
+        assert_eq!(echoed(&longest), longest);
+        assert_eq!(echoed(&"n".repeat(MAX_ECHO + 1)), "*");
+        assert_eq!(echoed("nobody-x"), "nobody-x");
+        // The grammar is checked as well as the length.
+        assert_eq!(echoed("two words"), "*");
+        assert_eq!(echoed(""), "*");
+        // The reply that echoes the longest name it may still fits.
+        let out = Out::new(
+            "a.very.long.server.name.example",
+            "406",
+            vec![
+                "n".repeat(crate::names::NICKLEN),
+                echoed(&longest).to_owned(),
+                "There was no such nickname".to_owned(),
+            ],
+        );
+        assert!(out.to_wire(true).len() <= MAX_LINE, "{}", out.to_wire(true));
     }
 }

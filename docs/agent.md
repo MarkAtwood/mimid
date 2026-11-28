@@ -31,11 +31,25 @@ The log goes to standard output. Environment variables:
 
 These are the server's variables and mean the same thing. The text format does not show event names; use `json` if you need them, for example to alert on `agent_sync_failed` or `agent_certificate_expiring`.
 
-Three events are rate limited, because they fire once per item on a path whose volume the sender or the server decides: `agent_message_discarded`, `agent_jmap_push_too_large` and `live_stream_frame_refused`. Each keeps its level and its name, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line. With `[telemetry]` configured, every one is counted in `mimid.refusals` by `event` whether or not it was logged. A discarded message is reported to the user's client as a problem of that room either way, so the window does not hide it from the person it happened to.
+Four events are rate limited, because they fire once per item on a path whose volume the sender, the server or a local client decides: `agent_message_discarded`, `agent_jmap_push_too_large`, `live_stream_frame_refused` and `agent_config_reload_refused`, which an IRC client can provoke as fast as it can send REHASH. Each keeps its level and its name, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line. With `[telemetry]` configured, every one is counted in `mimid.refusals` by `event` whether or not it was logged. A discarded message is reported to the user's client as a problem of that room either way, so the window does not hide it from the person it happened to.
 
 With a `[telemetry]` table the spans, the log events that `RUST_LOG` keeps and the metrics also go to an OpenTelemetry collector (see [`[telemetry]`](#telemetry)).
 
 SIGINT and SIGTERM both stop it. The stop ends the sync loop, the HTTP server, every EventSource stream and every IRC connection. Unix only.
+
+There is no SIGHUP. With `[irc]` on, an IRC client reloads the configuration file with `REHASH`:
+
+```
+/quote REHASH
+```
+
+The agent reads the file again and answers one notice per setting that changed, saying whether it is in use now or needs a restart, and then `382 Rehashing`. A file it cannot read or parse gets a notice and no `382`, and every setting in use stays as it was. The notices name settings and never their values.
+
+Only `invites` can change under a running agent. Everything else in the file was taken when the agent started -- into a listening socket, the open database, the MLS identity, a running loop, the HTTP routes or the log's own setup -- and a change to it is reported as needing a restart, on every `REHASH` until the agent is started again. That list is `server_url`, `binding`, `user_uri`, `token_file`, `state_dir`, `listen`, `sync_interval_ms`, `key_packages`, `allowed_origins`, `full_tree_hubs`, `blob_quota_bytes`, `blob_quota_count` and the tables `[did_webvh]`, `[jmap]`, `[irc]`, `[tls]`, `[tailnet]` and `[telemetry]`, each named as a whole.
+
+`REHASH` reads the configuration file and nothing else: not the TLS certificate at a `[tls]` path and not a `[did_webvh]` log file, each of which the agent re-reads on its own schedule. So a setting it does not name did not change.
+
+`RESTART` is refused with `481`. Restarting the agent is the job of whatever starts it.
 
 ## The token for local clients
 

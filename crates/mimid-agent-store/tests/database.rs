@@ -110,6 +110,7 @@ fn state() -> State {
         display_name: Some("Alice A.".to_owned()),
         did: Some("did:webvh:x:a.example".to_owned()),
         did_changed_at: Some(1_700_000_000_123),
+        clients: Some(2),
         first_seen: 1_700_000_000_000,
         ext: BTreeMap::new(),
     });

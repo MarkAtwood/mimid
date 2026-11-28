@@ -103,10 +103,30 @@ read for what it sends and expects. Details are in agent-frontends.md
 - **Also from Goguma's source:** `draft/message-redaction` (its "Delete"),
   `CLIENTTAGDENY` (so it sends no `+typing`), `+reply` beside
   `+draft/reply`, `multi-prefix`.
+- **MONITOR is answered** (agent-frontends.md §7.39), as reachability and
+  not presence: a 730 says the nick's user has a client in the MLS group
+  of a room this user shares, which is a fact MIMI gives, and a 731 says
+  they have none. Goguma already sends `MONITOR -` when it closes a
+  query, so it sends `MONITOR +` too and will show an indicator and call
+  it online. The honest answer to "no presence in MIMI" turned out to be
+  a different question, not no answer.
+- **`extended-join` and `account-tag` are answered**
+  (agent-frontends.md §7.40): both carry which MIMI user a nick stands
+  for, the user URI that WHOIS already reports. A client that negotiates
+  `account-tag` gets the `account` tag whether or not it also asked for
+  `message-tags` -- the tag capability depends on the tag format by
+  itself, and HexChat asks for the one without the other. With them goes
+  `standard-replies`, which the front end's `FAIL` lines were already
+  relying on the client to take.
 - **Still skipped:** `labeled-response` (the lesson below stands; Goguma
-  does not need it), `MONITOR` and `away-notify` (no presence in MIMI;
-  Goguma shows no indicator rather than a wrong one),
-  `soju.im/bouncer-networks`, `draft/metadata-2`, `soju.im/FILEHOST`.
+  does not need it), `away-notify` (no presence in MIMI, and nothing to
+  notify of), `soju.im/bouncer-networks`, `draft/metadata-2`,
+  `soju.im/FILEHOST`. `account-notify`, `invite-notify` and `chghost`
+  are skipped for good: an account that never moves, an invite with no
+  visible inviter and a host that cannot change leave each of them with
+  nothing to send. `setname` and `extended-monitor` are not skipped
+  but refused: see "Advertise only caps that are wired up" below, and
+  §7.39 for the verb.
 - **Registration as Goguma does it:** everything pipelined, one `CAP REQ`
   per cap (a NAK of an unknown one is harmless), `AUTHENTICATE` before the
   LS reply, a nick change after 001 accepted, but 432, 433, 436, 437 and
@@ -127,6 +147,14 @@ read for what it sends and expects. Details are in agent-frontends.md
   - Advertise only caps that are wired up (meshIRCd advertised
     account-notify, chghost, invite-notify, setname and labeled-response
     without sending them). Clients change their behaviour on the cap list.
+    `setname` is the one that cannot be wired up at all: a server
+    advertising it MUST support the command, and mimid refuses the
+    command, so the cap stays off the list for good (agent-frontends.md
+    §7.39). `extended-monitor` stays off for the same kind of reason: it
+    adds notifications for four caps this front end does not have.
+    Three of the five meshIRCd got wrong have no line to send here
+    either: account-notify, chghost and invite-notify
+    (agent-frontends.md §7.40 gives each one's reason).
 - **NICK and the burst:**
   - Accept the client's NICK, then make the real nick the target of 001,
     with a NICK change if needed. Never answer NICK with 462 (tailircd);
@@ -229,9 +257,37 @@ read for what it sends and expects. Details are in agent-frontends.md
     `MODE #c b` on every join and reports the channel synced only once
     324, 315 and 368 have come (checked 2026-11-21).
   - WHOIS always ends with 318, including 401 then 318 for an unknown nick.
+  - WHOWAS always ends with 369, including 406 then 369 for a nick the
+    server has no entry for; Modern makes that pair a MUST. A WHOWAS with
+    no nick at all is a single reply and gets no 369 after it. Its nick is
+    the *first* parameter, not the last as in WHOIS: `WHOWAS someone 2`
+    asks about `someone` (decision mimid-1wgh.143).
 - **Also implement:** NAMES, PART, QUIT (`ERROR :Closing Link` before
   closing), TOPIC, AWAY (305, 306 and 301), and ISON or USERHOST.
-- **Everything else:** answer 421.
+- **Everything else:** 421 answers a verb the server does not know, which
+  is how the Modern IRC Client Protocol defines it. A verb the server
+  knows and cannot apply answers the numeric that says so instead: in
+  mimid, OPER is 491 and CONNECT, SQUIT, KILL and WALLOPS are 481
+  (decision mimid-1wgh.141, and the class table in
+  docs/design/agent-frontends.md §4). A verb it can answer truthfully is
+  answered: ADMIN, LUSERS and LINKS reply with the agent's own facts
+  (decision mimid-1wgh.142), and MONITOR reports whether a nick's user
+  has a client in a shared group (decision mimid-1wgh.146, §7.39).
+  SETNAME goes the other way, into the refusals, because the realname
+  here is the user URI and MIMI carries no name a client may set; its
+  refusal is the IRCv3 spec's own FAIL and not a numeric. A verb that
+  names an operation the daemon
+  has is carried out: REHASH reads the configuration file again
+  (§7.38). RESTART stays 481, which Modern's own section invites by
+  calling the command optional.
+- **MONITOR, if you answer it:** pack 730, 731, 732 and 734 over as many
+  lines as 512 octets need (meshIRCd packs nothing and overruns on a long
+  list); echo the nick as the client sent it in 732, not the folded key;
+  keep the full stop in 734's "Monitor list is full."; and refuse an
+  unknown modifier, a target that is no nick and a parameter too many
+  rather than returning in silence, which a client cannot tell from a
+  dropped line. Check the bound before inserting, so the list can never
+  pass what 005 advertises.
 
 ### Messages
 

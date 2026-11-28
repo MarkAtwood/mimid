@@ -34,12 +34,33 @@
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
 //!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
 //!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
-//!   `draft/message-redaction`, `multi-prefix`, `soju.im/webpush` when
+//!   `draft/message-redaction`, `multi-prefix`, `account-tag`,
+//!   `extended-join`, `standard-replies`, `soju.im/webpush` when
 //!   push is on),
 //!   `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
+//! - **Which MIMI user a nick is** (§7.40): with `extended-join` the
+//!   JOIN carries the user URI as the account and the realname, the
+//!   string 311 and 330 send; with `account-tag` every line from a user
+//!   carries `@account=<uri>`, whether or not the client also asked for
+//!   `message-tags`. With `standard-replies` a line that is not UTF-8
+//!   is answered `FAIL * INVALID_UTF8`, where every other client gets a
+//!   NOTICE.
+//! - **Server queries**: `ADMIN` (256 to 259, and 402 for a target that
+//!   names another server), `LUSERS` (251 to 255, 265, 266) and `LINKS`
+//!   (one 364, then 365) answer with the agent's own facts -- the user
+//!   whose agent it is, their provider's domain, their clients and this
+//!   connection's channels -- and name no host, no path and no peer
+//!   (decision mimid-1wgh.142). `LINKS` lists this server alone, which
+//!   is how a client learns there is no network behind the port.
+//! - **The daemon's own configuration** (§7.38): with `REHASH` switched
+//!   on ([`IrcFrontEnd::enable_rehash`]), `REHASH` reads the file the
+//!   daemon was started from again, puts in use what a running daemon
+//!   can take, and sends a NOTICE for every other setting that changed
+//!   saying it needs a restart; 382 follows what was done. `RESTART` is
+//!   481: the daemon leaves restarting to whatever supervises it.
 //! - **Rooms are channels** (`#name`); the client is joined to every room
 //!   the user is in. JOIN of an unknown name hosts a new room, PART leaves
 //!   the room for good (§7.1). People are nicks `<local>-<label>`
@@ -90,6 +111,16 @@
 //! - **Reactions** (§7.27): shown as TAGMSG with `+draft/react` under
 //!   message-tags, else as a short ACTION line; a TAGMSG with
 //!   `+draft/react` or `+draft/unreact` reacts or takes it back.
+//! - **Reachability** (§7.39, the `monitor` module): `MONITOR` answers 730 for a
+//!   nick whose user has a client in the MLS group of a room this user
+//!   shares with them, and 731 for one who has none. That is
+//!   reachability and not availability: MIMI defines no presence, and a
+//!   user with no clients in the group receives nothing. The list is per
+//!   connection and bounded by [`MAX_MONITOR`], which 005
+//!   advertises. `SETNAME` is refused with `FAIL SETNAME
+//!   CANNOT_CHANGE_REALNAME`: the realname this front end reports is the
+//!   user URI, and MIMI carries no display name a client may set
+//!   (decision mimid-1wgh.146).
 //!
 //! # Limitations
 //!
@@ -101,19 +132,109 @@
 //!   keeping it off the wrong network is the operator's, with a firewall
 //!   or a proxy (decision mimid-1wgh.92). A credential is still required
 //!   either way. A TLS handshake must end within [`HANDSHAKE_WITHIN`].
-//! - No attachments, history playback without chathistory,
-//!   labeled-response, or sending edits from IRC (§4 "Sending", §7).
+//! - No attachments, history playback without chathistory, or sending
+//!   edits from IRC (§4 "Sending", §7).
+//! - Five IRCv3 capabilities are not offered, each because no line
+//!   exists for it (§7.40): `away-notify`, there being no away state at
+//!   all; `account-notify`, a nick's account being its user URI and
+//!   never moved to another person; `invite-notify`, a third party's
+//!   invite being invisible in the store's participant record;
+//!   `chghost`, the user and host coming from that URI; and
+//!   `labeled-response`, the answers a label would ride on coming back
+//!   later from the change feed and not from the command's dispatch.
+//! - `standard-replies` is offered, and its RECOMMENDED replacement of
+//!   the remaining failure notices with standard replies is not done:
+//!   the specification requires a registered reply code where one
+//!   exists, and that registry is not among the local specification
+//!   files, so an invented code could collide with a real one
+//!   (`register::CAPS`).
+//! - A user URI longer than [`names::MAX_ACCOUNT`], or holding a
+//!   character IRC cannot write, is shown as the `*` account and
+//!   carries no `account` tag (decision mimid-1wgh.150). The same URI is
+//!   still written at its own length in 311, 312, 314, 330, 352 and
+//!   every hostmask, so one past [`names::MAX_ACCOUNT`] can carry the
+//!   reply past [`line::MAX_LINE`]: bead mimid-1wgh.140.11. What no
+//!   length can do is break the line, because no parameter reaches the
+//!   wire holding CR, LF or NUL ([`line::Out::to_wire`]).
+//! - A name a client sent is echoed back by 401, 402, 406, 421, the 369
+//!   after a 406, and `FAIL MONITOR` only while it fits
+//!   [`line::MAX_ECHO`] and the parameter grammar; otherwise the reply
+//!   names `*`. A client that asks about a name longer than any this
+//!   daemon could have issued therefore cannot tell two such replies
+//!   apart, which is the cost of keeping the reply inside the 512
+//!   octets 005 advertises as `LINELEN`.
 //! - A user not seen yet has no nick: a first private message to them
 //!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they
-//!   stay a participant, so the nick stays in the channel.
+//!   stay a participant, so the nick stays in the channel. `MONITOR`
+//!   then reports that nick offline while `NAMES` still lists it, which
+//!   is the two verbs answering two different questions and not a
+//!   disagreement. Neither is fresher than the last sync.
+//! - A client shows a 730 as "online" and a user reads it as "here".
+//!   mimid cannot say whether anyone is at the other end, only whether
+//!   anything of theirs is in the group.
+//! - There is no IRC operator and no server link, so `OPER` is answered
+//!   491 ERR_NOOPERHOST and `CONNECT`, `SQUIT`, `KILL` and `WALLOPS` 481
+//!   ERR_NOPRIVILEGES: a refusal that names what mimid is, not the 421
+//!   that would claim it does not know the verb (decision
+//!   mimid-1wgh.141). None of Modern's KILL behaviour happens: no `KILL`
+//!   line to the target, no `QUIT` to their channels, no `ERROR`, no
+//!   close. The user's own other devices are dropped with the `mimid`
+//!   service's `forget-device`, which is a MIMI operation. A
+//!   `CONNECT` sent as a connection's first line is not answered at all:
+//!   it is taken for HTTP's `CONNECT` method and the connection closes
+//!   in silence.
+//! - `ADMIN`'s 259 RPL_ADMINEMAIL carries the user's MIMI address, not an
+//!   email address, which Modern's numeric requires: an agent has none,
+//!   and the parameter says so in the same breath. It is the one MUST
+//!   this crate does not meet (decision mimid-1wgh.142). `ADMIN` matches
+//!   no mask but the literal `*`, so `ADMIN <server name with a
+//!   wildcard>` is 402 although Modern allows wildcards in the target:
+//!   the crate matches no masks anywhere.
+//! - `LUSERS` counts this front end's IRC connections and the channels
+//!   the asking connection shows, which are the user's clients and rooms
+//!   on IRC and not their JMAP clients or their MLS devices; its 253
+//!   counts the connections admitted under the agent's caps that have
+//!   not logged in, whichever boundary admitted them, since one limiter
+//!   serves the whole agent. 265 and 266 give a maximum since this
+//!   daemon started, which a restart forgets. Nothing caps the
+//!   registered connections, so the number 255, 265 and 266 publish is
+//!   bounded by nothing but the listener.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
 //!   is a `PART` (§7.1), and only a new invite brings the user back.
+//! - `WHOWAS` reaches only this daemon run, and only forwards: it says
+//!   which MIMI user a nick stands for and since when this run has had
+//!   it, never which user it used to stand for. A nick here is derived
+//!   from the user URI and is never released or moved while the daemon
+//!   lives, so within a run there is nothing else to say; across a
+//!   restart a kept nick can come out as another user's, and that is the
+//!   one case WHOWAS was asked for and cannot answer, because the times
+//!   die with the process (decision mimid-1wgh.143, bead
+//!   mimid-1wgh.140.8). Modern calls the verb one about "a nickname which
+//!   no longer exists"; mimid answers for nicks in use, since none ever
+//!   stops existing. `<count>` is accepted and not read: there is at most
+//!   one entry per nick. The `mimid` service nick is 406: it stands for
+//!   no user.
+//! - `REHASH` reads the configuration file and nothing else: not the
+//!   TLS certificate at its configured path, which Modern names as
+//!   rehash material, and not the did:webvh log file (bead
+//!   mimid-1wgh.140.9). So every setting it puts in use is one it also
+//!   names, and one it does not name did not change. Of the settings in
+//!   the file only `invites` can be taken by a running daemon; every
+//!   other one is a bound socket, an open database, the MLS identity, a
+//!   spawned loop's local or a built router, and gets a NOTICE saying it
+//!   needs a restart. That NOTICE comes on every `REHASH` until the
+//!   daemon is started again, because until then the file and the
+//!   daemon still disagree. Sending 382 at all treats the one
+//!   authenticated user as this server's operator, a state mimid keeps
+//!   nowhere else (decision mimid-1wgh.145).
 //! - A connection waits while the store's sync holds the agent, PING
 //!   included: a PONG is written only once the agent is free, so it says
 //!   the user's next message could have been taken rather than that the
 //!   socket is open (decision mimid-1wgh.132). A client whose ping
-//!   timeout is shorter than a sync gives up during one.
+//!   timeout is shorter than a sync gives up during one. `ADMIN`,
+//!   `LUSERS` and `LINKS` are the exception: they touch neither the
+//!   agent nor the store, so they answer during a sync.
 //! - A connection that falls behind the change feed's log
 //!   ([`mimid_agent_store::TooOld`]) shows its channels again from the
 //!   records and is told that messages in between are not shown.
@@ -129,6 +250,7 @@ mod history;
 pub mod line;
 mod listen;
 mod markread;
+mod monitor;
 pub mod names;
 mod register;
 mod render;
@@ -140,6 +262,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 pub use listen::IrcFrontEnd;
+pub use monitor::MAX_MONITOR;
 pub use sasl::MECHANISMS as SASL_MECHANISMS;
 pub use webpush::{PAD_TO as PUSH_PAD_TO, TTL_SECONDS as PUSH_TTL_SECONDS, WebPushError};
 
@@ -244,6 +367,61 @@ impl PeerName {
         Self {
             node: node.into(),
             matched: matched.into(),
+        }
+    }
+}
+
+/// Reading the daemon's configuration file again, which `REHASH` asks
+/// for (docs/design/agent-frontends.md §7.38).
+///
+/// Which settings a running daemon can take and which need a restart is
+/// the daemon's to know, as the file itself is (mimid-agent's `reload`
+/// module). This crate only asks and says what came back, so it still
+/// holds no configuration knowledge of its own (AGENTS.md's crate map).
+pub trait Reload: std::fmt::Debug + Send + Sync {
+    /// The configuration file's path, as 382 RPL_REHASHING's `<config
+    /// file>` parameter and as the line that names it to the user.
+    fn config_file(&self) -> String;
+
+    /// Reads the file again and applies what can be applied.
+    fn reload(&self) -> std::pin::Pin<Box<dyn Future<Output = Reloaded> + Send + '_>>;
+}
+
+/// What one [`Reload::reload`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Reloaded {
+    /// The settings that changed in the file and are now in use, by the
+    /// name each has in the file.
+    pub applied: Vec<String>,
+    /// The settings that changed in the file and will not take effect
+    /// until the daemon is started again, by the name each has in the
+    /// file.
+    pub needs_restart: Vec<String>,
+    /// Why nothing at all was read, in one line fit to show the user;
+    /// `None` when the file was read. The settings in use are then
+    /// exactly what they were.
+    pub failed: Option<String>,
+}
+
+impl Reloaded {
+    /// A reload that read the file: `applied` is in use, and
+    /// `needs_restart` waits for the daemon to be started again.
+    #[must_use]
+    pub fn new(applied: Vec<String>, needs_restart: Vec<String>) -> Self {
+        Self {
+            applied,
+            needs_restart,
+            failed: None,
+        }
+    }
+
+    /// A reload that read nothing, because of `why`.
+    #[must_use]
+    pub fn failed(why: impl Into<String>) -> Self {
+        Self {
+            failed: Some(why.into()),
+            ..Self::default()
         }
     }
 }

@@ -99,13 +99,10 @@ fn timestamp(text: &str) -> Option<u64> {
 }
 
 impl Session {
-    /// `FAIL CHATHISTORY <code> <context...> :<description>`.
+    /// `FAIL CHATHISTORY <code> <context...> :<description>`
+    /// ([`Session::fail`]).
     fn history_fail(&mut self, code: &str, context: &[&str], description: &str) {
-        let mut params = vec!["CHATHISTORY".to_owned(), code.to_owned()];
-        params.extend(context.iter().map(|c| (*c).to_owned()));
-        params.push(description.to_owned());
-        let server = self.shared.server.clone();
-        self.send_cut(Out::new(&server, "FAIL", params));
+        self.fail("CHATHISTORY", code, context, description);
     }
 
     /// `CHATHISTORY`.
@@ -276,6 +273,8 @@ impl Session {
                         .tag("+draft/react", &crate::render::one_line_data(&r.reaction))
                         .tag("+draft/reply", &m.record.sender_msg_id);
                     out.tags.extend(every.iter().cloned());
+                    out.tags
+                        .extend(crate::render::account_tag(&who, self.caps.account_tag));
                     if self.caps.server_time {
                         out = out.tag("time", &server_time(r.accepted_at));
                     }
