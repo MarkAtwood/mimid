@@ -17,6 +17,7 @@ use mimi_protocol::{
     CATCH_UP_LIMIT, CatchUpRequest, CatchUpResponse, CatchUpResponseCode, CatchUpResult,
     FanoutEvent, FanoutMessage, IdentifierUri,
 };
+use mimid_telemetry::refusals::Refusal;
 use sha2::{Digest, Sha256};
 
 use super::{Follower, FollowerError};
@@ -387,13 +388,20 @@ impl Follower {
             // about what we are missing, so the gap stays as it is and
             // the next attempt asks again.
             if answer.result.response_code() != CatchUpResponseCode::Success {
-                tracing::warn!(
-                    name: "catch_up_refused",
-                    room_id,
-                    hub = %hub,
-                    code = ?answer.result.response_code(),
-                    "the room's hub refused catch-up"
-                );
+                // One line per window: a hub that refuses every room
+                // would otherwise write one per room per attempt (bead
+                // mimid-sami). `catch_up_gap_unfillable` above, the
+                // permanent loss, keeps its line per room.
+                if let Some(suppressed) = Refusal::CatchUpRefused.count() {
+                    tracing::warn!(
+                        name: "catch_up_refused",
+                        room_id,
+                        hub = %hub,
+                        code = ?answer.result.response_code(),
+                        suppressed,
+                        "the room's hub refused catch-up"
+                    );
+                }
                 return Ok(recovered);
             }
             let last = answer.entries().last().map(|entry| entry.sequence);

@@ -9,8 +9,9 @@ description = "mimid's log format, OpenTelemetry export and refusal counters, sh
 # A leaf crate: it depends on no other mimid crate, so both binaries and
 # the libraries under them can depend on it (bead mimid-c90r).
 [dependencies]
-# The metrics API, not the SDK: the global meter provider is set here,
-# and each binary builds the instruments it names itself.
+# The metrics API, not the SDK: counting a refusal is the API crate's
+# job, exporting it the SDK's, and a library crate that only counts does
+# not build an exporter (refusals).
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
 tracing.workspace = true
 # `export` only, from here down.
@@ -25,8 +26,9 @@ thiserror = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, features = ["json"], optional = true }
 
 [features]
-# The subscriber side: the JSON log format and the OTLP exporters, which
-# the two binaries turn on.
+# The subscriber side: the JSON log format and the OTLP exporters. The
+# two binaries turn it on; a library crate that only counts refusals
+# leaves it off.
 export = [
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",

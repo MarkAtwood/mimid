@@ -138,6 +138,7 @@ use mimi_protocol::{
     FanoutEvent, FanoutMessage, GroupInfoOption, HandshakeBundle, UpdateRequest, UpdateResult,
     UpdateRoomResponse, Utf8String,
 };
+use mimid_telemetry::refusals::Refusal;
 use sha2::{Digest, Sha256};
 
 use super::policy::{
@@ -942,15 +943,22 @@ fn stage_commit(
             let group_info_len =
                 group_info::response_len(hub, room_id, &group_info, &ratchet_tree)?;
             if by_reference.len() > hub.body_limit || group_info_len > hub.body_limit {
-                tracing::info!(
-                    name: "welcome_too_large",
-                    room_id,
-                    welcome_len = full.len(),
-                    welcome_without_tree_len = by_reference.len(),
-                    group_info_len,
-                    limit = hub.body_limit,
-                    "the ratchet tree cannot reach the new members; commit refused"
-                );
+                // One line per window, since a sender chooses how often
+                // it commits (bead mimid-sami). The level and the name
+                // are unchanged: docs/operating.md offers this event as
+                // an example of what to alert on.
+                if let Some(suppressed) = Refusal::WelcomeTooLarge.count() {
+                    tracing::info!(
+                        name: "welcome_too_large",
+                        room_id,
+                        welcome_len = full.len(),
+                        welcome_without_tree_len = by_reference.len(),
+                        group_info_len,
+                        limit = hub.body_limit,
+                        suppressed,
+                        "the ratchet tree cannot reach the new members; commit refused"
+                    );
+                }
                 return refuse(
                     room_id,
                     "the ratchet tree cannot reach the new members",

@@ -61,6 +61,7 @@ use std::collections::BTreeMap;
 
 use mimi_content::{ExternalPart, MessageId};
 use mimid_agent_core::{Agent, AgentError, Event, ReceivedMessage, ReportedMessage, RoomStatus};
+use mimid_telemetry::refusals::Refusal;
 
 use crate::change::Change;
 use crate::convert::{MessageRef, message_ref, sender_msg_id, topic_id};
@@ -1033,12 +1034,18 @@ impl Store {
                 expiry
             }
             crate::expiry::Received::Discard(why) => {
-                tracing::warn!(
-                    name: "agent_message_discarded",
-                    room_id = %received.room,
-                    reason = %why,
-                    "a received message was discarded"
-                );
+                // One line per window, however many a sender submits
+                // (bead mimid-sami). The user is told of every one
+                // regardless, through `report.problems` below.
+                if let Some(suppressed) = Refusal::AgentMessageDiscarded.count() {
+                    tracing::warn!(
+                        name: "agent_message_discarded",
+                        room_id = %received.room,
+                        reason = %why,
+                        suppressed,
+                        "a received message was discarded"
+                    );
+                }
                 report
                     .problems
                     .push(format!("{}: a message was discarded: {why}", received.room));

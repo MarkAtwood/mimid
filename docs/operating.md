@@ -21,6 +21,8 @@ Environment variables:
 
 The log goes to standard output. The text format does not show event names; use `json` if you need them, for example to alert on `shutdown_grace_expired` or `welcome_too_large`.
 
+**Four events are rate limited**, because they fire once per item on a path whose volume a sender or a peer decides: `fanout_delivery_refused`, `catch_up_refused`, `group_info_too_large` and `welcome_too_large`. Each keeps the level and the name it had, so an alert on one goes on working, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line of it. A refusal of another of the four is logged at once: the minute is per event. Every one of them is counted in the metric `mimid.refusals`, by `event`, whether or not its line was written, so with a collector the count is exact even where the log is thinned. When the refusals stop, the count of the last minute is in the metric only.
+
 With a `[telemetry]` table, spans, the log events that `RUST_LOG` keeps, and metrics also go to an OpenTelemetry collector (see [telemetry](#telemetry)).
 
 ## Stopping

@@ -20,6 +20,10 @@ mimi-mls = { path = "../mimi-mls" }
 mimi-protocol = { path = "../mimi-protocol" }
 mimi-room-policy = { path = "../mimi-room-policy" }
 mimid-live = { path = "../mimid-live" }
+# Counts the refusals whose lines are rate limited, so a sender
+# cannot set the log's size (bead mimid-sami). No exporter: that is
+# the `export` feature, which only the binaries turn on.
+mimid-telemetry = { path = "../mimid-telemetry" }
 # The live stream binding (docs/design/binary-live-stream.md): a WebSocket
 # client with the features crate-jmap already pulls in, and the tasks and
 # channels around it, on the caller's runtime.

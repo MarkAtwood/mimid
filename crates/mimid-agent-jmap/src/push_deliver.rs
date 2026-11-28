@@ -57,6 +57,7 @@ use jmap_chat_types::{Chat, ChatContact, ChatPushConfig, Message};
 use jmap_server::{Id, JmapReads, State};
 use mimid_agent_store::Change;
 use mimid_agent_store::push_crypto::{self, ClientKeys, SecretKey};
+use mimid_telemetry::refusals::Refusal;
 use tokio::sync::{broadcast, watch};
 
 use crate::backend::AgentChat;
@@ -222,10 +223,15 @@ async fn deliver(chat: &Arc<AgentChat>, client: &reqwest::Client, vapid: &Secret
         // dropped; a `None` is an entry that cannot be made to fit.
         for part in fit_chat_message_push(built.payload, MAX_BODY_BYTES) {
             let Some(part) = part else {
-                tracing::warn!(
-                    name: "agent_jmap_push_too_large",
-                    "an entry does not fit a push body and was dropped"
-                );
+                // One line per window, however many messages arrive
+                // (bead mimid-sami).
+                if let Some(suppressed) = Refusal::AgentJmapPushTooLarge.count() {
+                    tracing::warn!(
+                        name: "agent_jmap_push_too_large",
+                        suppressed,
+                        "an entry does not fit a push body and was dropped"
+                    );
+                }
                 continue;
             };
             let Ok(body) = serde_json::to_vec(&part) else {

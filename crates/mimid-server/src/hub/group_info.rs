@@ -77,6 +77,7 @@ use mimi_protocol::{
     GroupInfoRatchetTreeTbe, GroupInfoRequest, GroupInfoResponse, GroupInfoResponseTbs,
     PendingProposal, Protocol, encrypt_group_info,
 };
+use mimid_telemetry::refusals::Refusal;
 
 use super::room::{GROUP_INFO_MESSAGE_HEADER, hub_sender};
 use super::state::{room_state, user_domain};
@@ -130,14 +131,19 @@ pub(super) async fn group_info(
     let body = signed_response(hub, room_id, tbs.cipher_suite, encrypted)?;
     // Decision mimid-1wgh.81: never a response a peer will not read.
     if body.len() > hub.body_limit {
-        tracing::info!(
-            name: "group_info_too_large",
-            room_id,
-            epoch,
-            len = body.len(),
-            limit = hub.body_limit,
-            "GroupInfo and ratchet tree too large for one response; not served"
-        );
+        // One line per window, since a peer chooses how often it asks
+        // (bead mimid-sami).
+        if let Some(suppressed) = Refusal::GroupInfoTooLarge.count() {
+            tracing::info!(
+                name: "group_info_too_large",
+                room_id,
+                epoch,
+                len = body.len(),
+                limit = hub.body_limit,
+                suppressed,
+                "GroupInfo and ratchet tree too large for one response; not served"
+            );
+        }
         return Err(HubError::GroupInfoTooLarge { len: body.len() });
     }
     tracing::info!(

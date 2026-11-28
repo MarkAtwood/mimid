@@ -40,6 +40,7 @@ use mimid_live::{
     AckResult, ClientHello, ClientMessage, ErrorMessage, MAX_MESSAGE_BYTES, Op, OpKind,
     ProviderHello, ProviderMessage, Request, VERSION, code,
 };
+use mimid_telemetry::refusals::Refusal;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -298,11 +299,17 @@ fn read(shared: &Shared, bytes: &[u8], wake: &Notify) -> bool {
     let message = match decoded {
         Ok(message) => message,
         Err(error) => {
-            tracing::warn!(
-                name: "live_stream_frame_refused",
-                error = &error as &dyn std::error::Error,
-                "the server sent a frame that does not decode"
-            );
+            // One line per window: an unknown type does not end the
+            // connection, so a server can send any number of these
+            // (bead mimid-sami).
+            if let Some(suppressed) = Refusal::LiveStreamFrameRefused.count() {
+                tracing::warn!(
+                    name: "live_stream_frame_refused",
+                    error = &error as &dyn std::error::Error,
+                    suppressed,
+                    "the server sent a frame that does not decode"
+                );
+            }
             // An unknown message type from a later version is ignored
             // (note §3); anything else ends the connection.
             return matches!(error.error, mimid_live::DecodeError::UnknownType(_));

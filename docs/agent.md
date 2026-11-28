@@ -31,6 +31,8 @@ The log goes to standard output. Environment variables:
 
 These are the server's variables and mean the same thing. The text format does not show event names; use `json` if you need them, for example to alert on `agent_sync_failed` or `agent_certificate_expiring`.
 
+**Three events are rate limited**, because they fire once per item on a path whose volume the sender or the server decides: `agent_message_discarded`, `agent_jmap_push_too_large` and `live_stream_frame_refused`. Each keeps its level and its name, but at most one line per minute per event is written, and that line carries `suppressed`, how many were left out of the log since the previous line of it. With `[telemetry]` configured, every one is counted in `mimid.refusals` by `event` whether or not it was logged. A discarded message is reported to the user's client as a problem of that room either way, so the window does not hide it from the person it happened to.
+
 With a `[telemetry]` table the spans, the log events that `RUST_LOG` keeps and the metrics also go to an OpenTelemetry collector (see [`[telemetry]`](#telemetry)).
 
 SIGINT and SIGTERM both stop it. The stop ends the sync loop, the HTTP server, every EventSource stream and every IRC connection. Unix only.

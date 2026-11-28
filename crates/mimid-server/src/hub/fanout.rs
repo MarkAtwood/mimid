@@ -37,6 +37,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
+use mimid_telemetry::refusals::Refusal;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -261,20 +262,26 @@ impl<L: LocalDelivery> Fanout<L> {
                     ],
                 );
                 // The peer decided; this layer disposes of the row, and the
-                // room's later rows go on.
-                tracing::warn!(
-                    name: "fanout_delivery_refused",
-                    %room_id,
-                    %domain,
-                    id,
-                    attempts = attempts.saturating_add(1),
-                    error,
-                    status = rejection.status,
-                    response_len = rejection.response_len,
-                    response_code = rejection.response_code,
-                    error_description = rejection.error_description,
-                    "fanout delivery refused by the peer; dropped"
-                );
+                // room's later rows go on. One line per window, since a
+                // peer that refuses everything would otherwise write one
+                // per row (bead mimid-sami); `mimid.fanout.dropped` above
+                // counts them by peer and status either way.
+                if let Some(suppressed) = Refusal::FanoutDeliveryRefused.count() {
+                    tracing::warn!(
+                        name: "fanout_delivery_refused",
+                        %room_id,
+                        %domain,
+                        id,
+                        attempts = attempts.saturating_add(1),
+                        error,
+                        status = rejection.status,
+                        response_len = rejection.response_len,
+                        response_code = rejection.response_code,
+                        error_description = rejection.error_description,
+                        suppressed,
+                        "fanout delivery refused by the peer; dropped"
+                    );
+                }
             }
             Err((error, retry_after, false)) => {
                 let now = self.clock.now_ms();

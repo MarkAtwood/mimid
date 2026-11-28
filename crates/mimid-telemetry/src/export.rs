@@ -26,7 +26,9 @@
 //!
 //! **Metrics** are the global meter provider's: [`Telemetry::new`] sets
 //! it, so instruments a binary builds are no-ops until telemetry is
-//! configured, and a binary that builds none exports no metrics.
+//! configured, and a binary that builds none exports no metrics. The one
+//! instrument this crate owns, `mimid.refusals`, is registered there
+//! ([`crate::refusals`]).
 //!
 //! Export is OTLP over HTTP with protobuf bodies to `<endpoint>/v1/traces`,
 //! `/v1/logs` and `/v1/metrics`, with the blocking reqwest client (the
@@ -231,6 +233,12 @@ impl Telemetry {
         } else {
             None
         };
+        // After the global provider, or the instrument would be a no-op
+        // (the same reason `main` starts telemetry before anything else
+        // builds one).
+        if meter.is_some() {
+            crate::refusals::install();
+        }
         Ok(Self {
             tracer,
             logger,
