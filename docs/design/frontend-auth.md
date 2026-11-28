@@ -715,7 +715,7 @@ can ask WhoIs then and tailor what it offers.
 
 | Front end | What a matched client sends | What the agent does | What the user types |
 |---|---|---|---|
-| IRC | nothing, or PASS or SASL PLAIN with anything | accepts registration with no credential; any PASS or SASL PLAIN succeeds (903, 900). It still offers `sasl=PLAIN` but **not** `soju.im/account-required`, so Goguma labels the field "Password (optional)" (§2.1) | server and nick; password empty |
+| IRC | nothing, or PASS or SASL PLAIN with anything | accepts registration with no credential; any PASS or SASL PLAIN succeeds (903, 900). It still offers `sasl=PLAIN,SCRAM-SHA-256` (§4.1) but **not** `soju.im/account-required`, so Goguma labels the field "Password (optional)" (§2.1). SASL SCRAM-SHA-256 is the one mechanism a matched node gains nothing from: the proof must match a stored verifier, so it still needs a credential of the agent's | server and nick; password empty |
 | XMPP | SCRAM or PLAIN | PLAIN with any password succeeds. SCRAM cannot accept "anything": the server must prove it knows the password's key. So the agent also accepts the fixed password `tailnet` (INVENTED) by SCRAM, from matched peers only, with verifiers made for that word. That keeps SASL2, SCRAM and -PLUS on offer, so Monal and Conversations' pinning are not disturbed (§2.3) | address; password `tailnet` |
 | Matrix | `m.login.password` with something in the field | any password succeeds; the device and its token belong to a pseudo-credential `tailnet:<node>`, and the token is accepted only from that node | server, username; any password (setup says `tailnet`) |
 | JMAP | — | **no change: Bearer or Basic still required** (below) | an app password |
@@ -1140,10 +1140,13 @@ no rate the agent allows makes online guessing work. So:
   counted per /64 (INVENTED). Loopback is counted like any other
   address, with a higher threshold of 20 (INVENTED), so a local script
   in a loop does not slow the user's own clients for long.
-- **The slowdown is for log noise and CPU, not for guessing:** each failed plain login
-  may run the SCRAM-SHA-256 derivation once per unrevoked credential (§3.3).
-  It also tames WeeChat's default `sasl_fail = reconnect`, which retries
-  a wrong password forever (§2.1).
+- **The slowdown is for log noise and CPU, not for guessing:** each
+  failed plain login runs one SCRAM-SHA-256 derivation, 4,096 PBKDF2
+  iterations, however many credentials there are, and then one
+  constant-time comparison per unrevoked credential (§3.3), so the cost
+  is per attempt and not per credential. It also tames WeeChat's default
+  `sasl_fail = reconnect`, which retries a wrong password forever
+  (§2.1).
 - **Unauthenticated connections are capped**: at most 32 at once in
   total and 8 per source address (INVENTED), each closed if it has not
   logged in within 30 seconds (soju's `downstreamRegisterTimeout` is
@@ -1250,8 +1253,9 @@ start (decision A9).
 
 Steps 1 to 6, 8, 9, 11 and 12 are built (epic mimid-e13m, which has a
 child bead per step). Steps 7 and 10 wait on the Matrix and XMPP front
-ends, which do not exist. The sizes are estimates made before the work,
-and matter now only for the two steps still to come.
+ends, which do not exist. Every row carries the size estimated before
+the work: a forecast for steps 7 and 10, and for a built step the figure
+its work was measured against, as step 8's row records.
 
 | Step | What | Size | Needed before |
 |---|---|---|---|

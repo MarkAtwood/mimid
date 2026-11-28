@@ -247,9 +247,10 @@ read for what it sends and expects. Details are in agent-frontends.md
 - **labeled-response:** only offer it if every reply, numerics included,
   carries the label. meshIRCd's never did, so clients waited forever.
 - **chathistory:** it needs a real store; the label wiring is optional
-  (Goguma matches the batch by type and target). History should key on
-  the account, not the nick pair (meshIRCd keyed DMs by nicks). Built in
-  IRC v2 (above).
+  (Goguma matches the batch by type and target). History should key on the
+  room, not the nick pair (meshIRCd keyed DMs by nicks): a query's nick
+  resolves to the peer's user URI, and that URI to their room, so a nick
+  change leaves history where it is. Built in IRC v2 (above).
 
 ### Transport and flood control
 

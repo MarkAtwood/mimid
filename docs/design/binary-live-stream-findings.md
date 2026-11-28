@@ -225,8 +225,9 @@ covers a per-user, per-room flag.
 
 **JMAP binding.** mimid uses the JMAP metadata extension's
 `privateMetadata` on the Chat, under its own namespace
-(decision mimid-1wgh.63; crates/mimid-agent-core/src/client.rs:431-447),
-which a server without draft-ietf-jmap-metadata cannot hold.
+(`ACCEPTED_NAMESPACE`, `Jmap::chats` and `Jmap::set_accepted`; decision
+mimid-1wgh.63; crates/mimid-agent-core/src/client.rs:431-447), which a
+server without draft-ietf-jmap-metadata cannot hold.
 
 **Stream.** `SetChatAccepted` and `accepted` in `ListChats`: a mimid
 message, INVENTED, NOT FROM SPEC.
@@ -239,8 +240,13 @@ message, INVENTED, NOT FROM SPEC.
 
 **Decision.** Take: the `privateMetadata` MAY text. (Mark, 2026-11-20.)
 
-Built: nothing to build; the text is a MAY and mimid does not use
-`privateMetadata`.
+Built: nothing to build; the text is a MAY, and mimid already does what
+it permits, on both sides: the agent records `{"accepted": true}` in
+its own `privateMetadata` namespace and reads it back, and the provider
+holds Chat `privateMetadata` in vendor namespaces
+(crates/mimid-server/src/jmap/metadata.rs). Against a server without
+the extension the agent records nothing, so every room reads as not
+accepted and none is joined by `join_own_rooms`.
 
 ## F7. Attachment upload and fetch have no error vocabulary
 
@@ -291,9 +297,12 @@ is answered as `"refused"`."
 **JMAP binding.** mimid adds `status`, the other provider's HTTP status
 (INVENTED, decision mimid-1wgh.58;
 crates/mimid-server/src/jmap/methods/room_report_abuse.rs:88-93), and
-the agent requires it (crates/mimid-agent-core/src/client.rs:746-751),
-so a strict client of the draft alone would fail against a server
-that leaves it out, and the agent against one that follows the draft.
+the agent reads it when it is there and takes it as optional
+(`Jmap::report_abuse`, crates/mimid-agent-core/src/client.rs:746-751),
+so a client of the draft alone meets a field the draft does not define
+on mimid's `refused` answer and has to ignore it, and the agent, against
+a server that follows the draft, gets a `refused` whose reason it cannot
+name.
 
 **Stream.** `Error` `refused` with `status` (crates/mimid-server/src/jmap/live.rs:750).
 

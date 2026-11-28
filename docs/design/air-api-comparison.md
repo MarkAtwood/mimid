@@ -129,10 +129,10 @@ rate limiter (`GovernorLayer` with `ClientIpExtractor`,
   members' queues. Joiners get the tree and room state from
   `WelcomeInfo` (after a Welcome) or `ExternalCommitInfo` (external
   join).
-- **Membership changes the DS initiates.** `DeleteGroup` writes a
-  tombstone into the group context; afterwards writes fail with
-  `NOT_FOUND` and detail `GROUP_CLOSED`, reads still work
-  (`ensure_no_tombstone`, `backend/src/ds/grpc.rs`).
+- **Group deletion.** `DeleteGroup` writes a tombstone into the group
+  context; afterwards writes fail with `NOT_FOUND` and detail
+  `GROUP_CLOSED`, reads still work (`ensure_no_tombstone`,
+  `backend/src/ds/grpc.rs`).
 
 ### 1.4 Messages and fanout
 
@@ -268,7 +268,7 @@ draft-atwood-jmap-chat-00; RFC 8620 items are what both build on.
 | AS | `ListenUsername` | `Consent/changes` / StateChange for Consent, loosely |
 | DS | `RequestGroupId` | none: the client picks room ID and group ID (`Room/create` checks 5 and 6) |
 | DS | `CreateGroup`, `CreateApqGroup`, `CreateGroupV2` | `Room/create` |
-| DS | `WelcomeInfo` | none: the Welcome arrives as a FanoutMessage; the tree comes in it or by `GroupInfo/fetch` (not checked against MIMI protocol-06) |
+| DS | `WelcomeInfo` | none: the Welcome arrives as a FanoutMessage with a `RatchetTreeOption` beside it, or the tree comes by `GroupInfo/fetch` (protocol-07 §5.5, §5.6) |
 | DS | `ExternalCommitInfo` | `GroupInfo/fetch` |
 | DS | `EpochSnapshot` | none |
 | DS | `ConnectionGroupInfo` | `GroupInfo/fetch`, loosely |
@@ -628,6 +628,10 @@ client-held), and KeyPackage fetch by bearer secret.
   checked.
 - Phoenix's `mimi-room-policy` and `mimi_content` crates were not
   compared with the current MIMI drafts.
-- How the joiner gets the ratchet tree with a Welcome under MIMI
-  protocol-06 (row `WelcomeInfo` in §2.1) was not checked against that
-  draft.
+- ~~How the joiner gets the ratchet tree with a Welcome under MIMI
+  protocol (row `WelcomeInfo` in §2.1).~~ **Checked 2026-11-27 against
+  protocol-07:** §5.5 puts a `RatchetTreeOption` in the FanoutMessage
+  that carries the Welcome, and §5.6's GroupInfoResponse carries one
+  beside the GroupInfo. Neither has to hold the tree inline: a
+  `RatchetTreeOption` can instead give an HTTPS URL, say out of band, or
+  say the DS reconstructs it (ratchet-tree-options-02 §3).
