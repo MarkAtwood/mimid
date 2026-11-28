@@ -20,8 +20,9 @@
 //!    mimid-1wgh.137). The provider probes a quiet connection on the pair
 //!    that connection stated, or on the pair the provider stated itself
 //!    for a client that stated neither, and closes it once two probes
-//!    have gone unanswered for its idle tolerance. A pair with no room
-//!    for two probes and their answers is `Error` `badKeepalive`.
+//!    have gone unanswered for its idle tolerance. A pair that leaves a
+//!    prober no base period it may legally pace itself by is `Error`
+//!    `badKeepalive`.
 //! 3. Each request runs in its own task, so a slow hub holds up nothing
 //!    else; its `Ack` or `Error` goes out when it ends (decision
 //!    mimid-1wgh.74). At most [`MAX_OUTSTANDING`] run at once.
@@ -274,10 +275,9 @@ async fn hello(state: &JmapState, sender: &Sender, source: &mut Source) -> Optio
     }
     let hello = match ClientMessage::decode(&frame) {
         Ok(ClientMessage::Hello(hello)) => hello,
-        // A pair with no room for two probes and their answers has its
-        // own code: the client's hello was well formed and its numbers
-        // were not (draft-atwood-mimi-keepalive-00 §4.1; bead
-        // mimid-mm42).
+        // A pair that leaves a prober no legal base period has its own
+        // code: the client's hello was well formed and its numbers were
+        // not (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42).
         Err(error) if matches!(error.error, DecodeError::Keepalive(_)) => {
             tracing::debug!(
                 error = &error as &dyn std::error::Error,

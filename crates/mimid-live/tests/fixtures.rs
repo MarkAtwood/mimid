@@ -471,11 +471,11 @@ fn changed() {
     );
 }
 
-/// Bead mimid-mm42: the agent refuses a provider whose pair leaves no
-/// room for two probes (draft-atwood-mimi-keepalive-00 §4.1) instead of
-/// probing on it. The fixture's `maxIdleSeconds` is lowered to
-/// `PROBES_PER_IDLE` times its `minIntervalSeconds`, the largest value
-/// the rule refuses.
+/// Bead mimid-mm42: the agent refuses a provider whose pair leaves a
+/// prober no legal base period (draft-atwood-mimi-keepalive-00 §4.1)
+/// instead of probing on it. The fixture's `maxIdleSeconds` is lowered
+/// to 112, the largest value the rule refuses beside its
+/// `minIntervalSeconds` of 30: 15 x 30 is 450 and 4 x 112 is 448.
 #[test]
 fn a_provider_hello_whose_keepalive_leaves_no_room_is_refused() {
     let Value::Map(mut pairs) = mimid_live::cbor::decode(&fixture("provider-hello-keepalive.hex"))
@@ -485,7 +485,7 @@ fn a_provider_hello_whose_keepalive_leaves_no_room_is_refused() {
     };
     for (key, value) in &mut pairs {
         if *key == Value::Text("maxIdleSeconds".to_owned()) {
-            *value = Value::Uint(90);
+            *value = Value::Uint(112);
         }
     }
     let broken = mimid_live::cbor::encode(&Value::Map(pairs));
@@ -494,7 +494,7 @@ fn a_provider_hello_whose_keepalive_leaves_no_room_is_refused() {
         .error;
     assert_eq!(
         error,
-        mimid_live::DecodeError::Keepalive(KeepaliveError::NoRoom { min: 30, max: 90 })
+        mimid_live::DecodeError::Keepalive(KeepaliveError::NoRoom { min: 30, max: 112 })
     );
 }
 

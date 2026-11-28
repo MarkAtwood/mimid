@@ -36,6 +36,11 @@
 # hellos, which keep their version 1 form; the hex of that one member was
 # edited by hand in each file and the files are otherwise unchanged.
 #
+# Their comment lines state the rule of §4.1, which bead mimid-f9x4.1
+# corrected to 15 x minIntervalSeconds under 4 x maxIdleSeconds; 30 and
+# 120 satisfy it either way, so the hex bytes of both files are the ones
+# encoded on 2026-11-27 and only the comment and the SHA-256 below moved.
+#
 # fixtures.rs decodes each file, compares it to the value written out in
 # the test, encodes it again and requires the same bytes.
 #
@@ -47,13 +52,13 @@
 #   e5cf6d86bae933de2ad1caa33fd9227bb5c020fcfebcd8a7868ce0d52205f666  ack-send-message-ids.hex
 #   35e4cb99f38eb33b34ab5002b5a837bdc11dda20ce11db48c2961b2fe195018f  changed.hex
 #   9df82e52bee56e89af8db01e7f544a592d069d0a4ff8e0dfd3cd65e0bfa307e5  client-hello.hex
-#   8592c0e9c8370b090622af4855a018b8988e803b1f1fef835de23eb7ad093ec2  client-hello-keepalive.hex
+#   13ce074117c1a1257106cd18e30dac5b2804a559c86b75755ca59ec8ae285fdf  client-hello-keepalive.hex
 #   53036a2d47e95722dc2593b19a31359bc9411c4509c7b4dfa8501044ada5a51a  deliver.hex
 #   e68e4d74350418c20d038f11d4b38ddb7f6db123faac339f7b52bb3feee1620b  error-epoch-too-old.hex
 #   0abafc412c32e3de13c522833c67a4bf99463795480b330f14ceb40f7db7840a  error-rate-limited.hex
 #   dfadeaffe0834c89484125fb92cc0f07b8a693dc42cacd95bff71c8ccd6d5360  position-unknown-member.hex
 #   12eae7287aa0b802731320434c6020f4516ec51e4374fc70486bc587bbbab3af  provider-hello.hex
-#   1702542c5d38cdb066333af1b25844d5cb60fd35eb3be7f3ec88ae25677e7930  provider-hello-keepalive.hex
+#   0a44c142eb9b22e5c5276c3c94729e56e4ccdd4af5020f47d71981f648f12b13  provider-hello-keepalive.hex
 #   38831155dd165e5505d703638917335f0b455088a43e90db7dc4796f9fea0638  provider-hello-max-clients.hex
 #   fa22a70823ded903c750e26e98ff74e1147ebc107a007cb37dbac772dbe450c7  provider-hello-max-kp-lifetime.hex
 #   14f7167f3f7c59358640ab9120f86c285216e5c0c29695478c25c1102e1066e0  provider-hello-retention.hex

@@ -510,8 +510,8 @@ fn envelope(f: &mut Fields) -> Result<(u64, String), DecodeError> {
 
 /// Reads a hello's keepalive pair: both members, or neither
 /// (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42). One alone and
-/// a pair with no room for two probes are both refused here, at parse
-/// time, so no caller holds an unusable pair.
+/// a pair under the pacing floor are both refused here, at parse time,
+/// so no caller holds an unusable pair.
 fn read_keepalive(f: &mut Fields) -> Result<Option<Keepalive>, DecodeError> {
     let min = f.opt_uint("minIntervalSeconds")?;
     let max = f.opt_uint("maxIdleSeconds")?;

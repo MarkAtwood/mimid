@@ -69,12 +69,29 @@ fn decoded_keepalive(bytes: &[u8]) -> Option<Keepalive> {
     }
 }
 
-/// Bead mimid-mm42: `PROBES_PER_IDLE * minIntervalSeconds` must be under
-/// `maxIdleSeconds` (draft-atwood-mimi-keepalive-00 §4.1), checked at
-/// parse time, at the boundary and past it.
+/// Bead mimid-mm42: `15 x minIntervalSeconds` must be under
+/// `4 x maxIdleSeconds` (draft-atwood-mimi-keepalive-00 §4.1), checked at
+/// parse time, at the boundary and past it. 4 and 15 is the boundary
+/// itself, where the two sides are equal and the comparison is strict.
+///
+/// (2, 7) and (30, 91) are the pairs bead mimid-f9x4.1 found: three times
+/// `minIntervalSeconds` and one second more, inside which a prober has no
+/// base period it may legally pace itself by, since §4.3 jitters each
+/// interval down to 0.8 of the period and lets the responder refuse an
+/// interval under `minIntervalSeconds` as `tooFrequent`.
 #[test]
 fn a_hello_whose_keepalive_leaves_no_room_for_two_probes_is_refused() {
-    for (min, max) in [(30, 90), (30, 30), (1, 3), (2, 6), (1, 1)] {
+    for (min, max) in [
+        (30, 90),
+        (30, 30),
+        (1, 3),
+        (2, 6),
+        (1, 1),
+        (4, 15),
+        (2, 7),
+        (30, 91),
+        (30, 112),
+    ] {
         assert_eq!(
             client_error(&hello_keepalive(min, max)),
             DecodeError::Keepalive(KeepaliveError::NoRoom { min, max }),
@@ -82,7 +99,7 @@ fn a_hello_whose_keepalive_leaves_no_room_for_two_probes_is_refused() {
         );
     }
     // One second more than the refused pair is the first accepted one.
-    for (min, max) in [(30, 91), (1, 4), (2, 7)] {
+    for (min, max) in [(4, 16), (1, 4), (2, 8), (30, 113)] {
         assert_eq!(
             decoded_keepalive(&hello_keepalive(min, max)),
             Some(Keepalive::new(min, max).unwrap()),

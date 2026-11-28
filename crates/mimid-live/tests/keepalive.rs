@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use mimid_live::keepalive::{
-    JITTER_HIGH_PERMILLE, JITTER_LOW_PERMILLE, MAX_KEEPALIVE_SECONDS, Outcome, PROBES_PER_IDLE,
-    Prober, UNANSWERED_PROBES,
+    JITTER_HIGH_PERMILLE, JITTER_LOW_PERMILLE, MAX_KEEPALIVE_SECONDS, Outcome,
+    PACING_FLOOR_DENOMINATOR, PACING_FLOOR_NUMERATOR, PROBES_PER_IDLE, Prober, UNANSWERED_PROBES,
 };
 use mimid_live::{Keepalive, MAX_IDLE, PING_AFTER};
 
@@ -15,26 +15,59 @@ fn pair(min: u64, max: u64) -> Keepalive {
     Keepalive::new(min, max).expect("a usable pair")
 }
 
+/// The smallest `maxIdleSeconds` the rule of §4.1 accepts beside `min`:
+/// one more than the largest it refuses, the comparison being strict.
+fn smallest_idle(min: u64) -> u64 {
+    PACING_FLOOR_NUMERATOR * min / PACING_FLOOR_DENOMINATOR + 1
+}
+
+/// The pacing floor of §4.1 is what §4.3 asks of a base period, not a
+/// number chosen beside it: PROBES_PER_IDLE periods to an idle period,
+/// each period at 1000/JITTER_LOW_PERMILLE minimum intervals, which is
+/// 3 x 1.25 = 15/4 (bead mimid-f9x4.1).
+#[test]
+fn the_pacing_floor_follows_from_the_jitter() {
+    assert_eq!(
+        PACING_FLOOR_NUMERATOR * JITTER_LOW_PERMILLE,
+        PACING_FLOOR_DENOMINATOR * PROBES_PER_IDLE * 1_000
+    );
+}
+
 /// What mimid offers satisfies the rule it enforces (§4.1).
 #[test]
 fn the_offered_pair_is_usable() {
     let offered = pair(PING_AFTER.as_secs(), MAX_IDLE.as_secs());
     assert_eq!(Keepalive::default(), offered);
-    assert!(PROBES_PER_IDLE * offered.min_interval_seconds() < offered.max_idle_seconds());
+    assert!(
+        PACING_FLOOR_NUMERATOR * offered.min_interval_seconds()
+            < PACING_FLOOR_DENOMINATOR * offered.max_idle_seconds(),
+        "{offered:?}"
+    );
     // The cadence stays under the 60 seconds where a NAT reaps an idle
     // carrier, jitter included.
     let longest = offered.period().as_millis() * u128::from(JITTER_HIGH_PERMILLE) / 1_000;
     assert!(longest < 60_000, "{longest} ms");
 }
 
-/// §4.3: `minIntervalSeconds <= P` and `PROBES_PER_IDLE * P` under
-/// `maxIdleSeconds`, for every pair the rule accepts.
+/// §4.3 puts two conditions on the base period P: every interval
+/// jittered out of P is at least `minIntervalSeconds`, and
+/// `PROBES_PER_IDLE * P` is under `maxIdleSeconds`. Both hold for every
+/// pair the rule of §4.1 accepts, and a pair under that rule's floor is
+/// no pair at all.
 #[test]
 fn the_period_is_inside_the_pair() {
     for min in [1, 2, 7, 30, 3_600] {
+        // One second under the floor. For min 2 that is 7, which is
+        // PROBES_PER_IDLE x 2 + 1: the pair bead mimid-f9x4.1 found,
+        // inside which no legal P exists.
+        let refused = smallest_idle(min) - 1;
+        assert!(
+            Keepalive::new(min, refused).is_err(),
+            "{min} and {refused} is under the floor"
+        );
         for max in [
-            PROBES_PER_IDLE * min + 1,
-            PROBES_PER_IDLE * min + 2,
+            smallest_idle(min),
+            smallest_idle(min) + 1,
             4 * min,
             100 * min,
             MAX_KEEPALIVE_SECONDS,
@@ -43,19 +76,52 @@ fn the_period_is_inside_the_pair() {
                 continue;
             }
             let keepalive = pair(min, max);
-            let period = keepalive.period().as_secs();
-            assert!(period >= min, "{min} and {max}: P is {period}");
+            let period = keepalive.period().as_millis();
+            let lowest = period * u128::from(JITTER_LOW_PERMILLE) / 1_000;
             assert!(
-                PROBES_PER_IDLE * period < max,
-                "{min} and {max}: P is {period}"
+                lowest >= u128::from(min) * 1_000,
+                "{min} and {max}: P is {period} ms, jittered down to {lowest} ms"
             );
-            // The largest such whole second, so one more breaks the rule.
             assert!(
-                PROBES_PER_IDLE * (period + 1) >= max,
-                "{min} and {max}: P is {period}, not the largest"
+                u128::from(PROBES_PER_IDLE) * period < u128::from(max) * 1_000,
+                "{min} and {max}: P is {period} ms"
+            );
+            // The largest such millisecond, so one more breaks the rule.
+            assert!(
+                u128::from(PROBES_PER_IDLE) * (period + 1) >= u128::from(max) * 1_000,
+                "{min} and {max}: P is {period} ms, not the largest"
             );
         }
     }
+}
+
+/// The rule of §4.1 and the two conditions of §4.3 agree over every
+/// small pair: each pair the rule accepts has a legal P, and the P
+/// chosen is legal. A pair that satisfied the floor while admitting no
+/// legal P is what bead mimid-f9x4.1 found, so the agreement is asserted
+/// over a range rather than over the pairs named above.
+#[test]
+fn every_accepted_small_pair_has_a_legal_period() {
+    let mut accepted = 0;
+    for min in 1..=64 {
+        for max in 1..=1_024 {
+            let Ok(keepalive) = Keepalive::new(min, max) else {
+                continue;
+            };
+            accepted += 1;
+            let period = keepalive.period().as_millis();
+            let lowest = period * u128::from(JITTER_LOW_PERMILLE) / 1_000;
+            assert!(
+                lowest >= u128::from(min) * 1_000,
+                "{min} and {max}: P is {period} ms, jittered down to {lowest} ms"
+            );
+            assert!(
+                u128::from(PROBES_PER_IDLE) * period < u128::from(max) * 1_000,
+                "{min} and {max}: P is {period} ms"
+            );
+        }
+    }
+    assert!(accepted > 10_000, "{accepted} pairs accepted");
 }
 
 /// §4.3: each interval is P randomized between 0.8 and 1.2 of its value.
@@ -169,7 +235,7 @@ fn a_carrier_that_answers_lives() {
 /// short the pair is.
 #[test]
 fn the_first_quiet_period_only_probes() {
-    for (min, max) in [(1, 4), (30, 91), (1, MAX_KEEPALIVE_SECONDS)] {
+    for (min, max) in [(1, 4), (30, 113), (1, MAX_KEEPALIVE_SECONDS)] {
         let mut prober = Prober::new(Some(pair(min, max)), 13);
         assert_eq!(prober.quiet(), Outcome::Probe, "{min} and {max}");
         assert_eq!(prober.unanswered(), 1);

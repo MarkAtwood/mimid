@@ -487,7 +487,8 @@ ClientHello = {
 keepalive = (
   "minIntervalSeconds": uint,  ; the shortest probe interval answered
   "maxIdleSeconds": uint       ; the longest idle tolerated;
-                               ; 3 x minIntervalSeconds < maxIdleSeconds
+                               ; 15 x minIntervalSeconds
+                               ;   < 4 x maxIdleSeconds
 )
 
 ProviderHello = {
@@ -624,20 +625,27 @@ mimid-1wgh.137). The probe stays a WebSocket Ping, so no message is added
 to the binding.
 
 - **The rule** of §4.1, which the decoder enforces, so a hello that
-  breaks it is not a message of this version: three times
-  `minIntervalSeconds` is less than `maxIdleSeconds`. Two probes paced at
-  up to 1.2 of the chosen period account for 2.4 of it; the remaining 0.6
-  is the budget for the second answer. A `ClientHello` that breaks it is
-  `Error` `badKeepalive` and a closed connection; a `ProviderHello` that
-  breaks it ends the agent's hello with an error. One value without the
-  other, a zero and anything past a day are refused the same way.
+  breaks it is not a message of this version: 15 times
+  `minIntervalSeconds` is less than 4 times `maxIdleSeconds`. The ratio
+  is 3.75, in integers because both values are whole seconds, and it is
+  three base periods to an idle period at a base period of 1.25 minimum
+  intervals. Two probes paced at up to 1.2 of the period account for 2.4
+  of it and the remaining 0.6 is the budget for the second answer; the
+  1.25 is the floor §4.3 puts on the jittered interval, which the period
+  carries because the jitter takes each interval down to 0.8 of it. A
+  `ClientHello` that breaks the rule is `Error` `badKeepalive` and a
+  closed connection; a `ProviderHello` that breaks it ends the agent's
+  hello with an error. One value without the other, a zero and anything
+  past a day are refused the same way.
 - **The pacing** (§4.3). The prober picks a base period P with
-  `minIntervalSeconds <= P` and `3 x P < maxIdleSeconds`, and randomizes
-  each interval between 0.8 and 1.2 of P so that probers do not
-  synchronize. mimid picks the largest such whole second rather than the
-  smallest, so that no interval falls below the interval the responder
-  undertook to answer; bead mimid-f9x4.1 holds why the draft's two rules
-  can disagree about that.
+  `4 x P >= 5 x minIntervalSeconds` and `3 x P < maxIdleSeconds`, and
+  randomizes each interval between 0.8 and 1.2 of P so that probers do
+  not synchronize. mimid picks the largest legal P rather than the
+  smallest, in whole milliseconds: a legal pair need not admit a legal
+  whole second, since 1 and 6 leaves P between 1.25 and 2 seconds. The
+  floor is on the jittered interval and not on P, so a prober pacing P at
+  `minIntervalSeconds` would send one interval in five that the responder
+  may refuse as `tooFrequent` (bead mimid-f9x4.1).
 - **Failure** (§4.4). Two probes unanswered, and the responder's idle
   tolerance spent, together end the carrier; one unanswered probe is an
   ordinary event. The rule above makes the pair consistent: by the time
@@ -645,7 +653,8 @@ to the binding.
   revalidation then asks for nothing of its own on this binding: an end
   that probes continuously has either heard from the other inside its
   idle tolerance or declared the carrier dead, so traffic only ever goes
-  on a carrier that answered inside it.
+  on a carrier that answered inside it, which is what §4.5 says of a
+  prober that probes continuously.
 - **A prober with no pair does not probe** (§4.3), having no interval the
   far end undertook to answer. A provider told nothing by a client is the
   one exception: it probes that client on the pair it stated in its own
@@ -655,9 +664,10 @@ to the binding.
   and the agent's own pair: `PING_AFTER`, 30 seconds, and `MAX_IDLE`, 120
   seconds. Both INVENTED, NOT FROM SPEC. A dead carrier is noticed within
   two minutes rather than within one, which is what the room for the
-  second answer costs. The cadence stays under the 60 seconds where
-  deployed NATs and load balancers reap an idle TCP connection: P is 39
-  seconds here, so the longest jittered interval is 47.
+  second answer costs. The pair satisfies the rule above, 450 under 480.
+  The cadence stays under the 60 seconds where deployed NATs and load
+  balancers reap an idle TCP connection: P is 39.999 seconds here, so the
+  longest jittered interval is 48.
 - **What a Ping asserts** is unchanged: the pipe is there and the far end
   is reading, not that the provider can serve a request (§4). The draft's
   own `KeepAliveRequest`, which the serving component must answer, is not

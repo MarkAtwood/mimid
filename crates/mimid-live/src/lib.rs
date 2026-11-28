@@ -98,11 +98,14 @@ pub const PING_AFTER: Duration = Duration::from_secs(30);
 /// FROM SPEC.
 ///
 /// Two minutes, because the idle tolerance must hold two probes and the
-/// second answer: [`keepalive::PROBES_PER_IDLE`] times [`PING_AFTER`] is
-/// 90 seconds, so a dead carrier is noticed within two minutes rather
-/// than within one. The probe cadence stays under the 60 seconds where a
-/// NAT reaps an idle carrier: the period [`Keepalive::period`] picks here
-/// is 39 seconds and the jitter takes it to at most 47.
+/// second answer, and must leave a prober a base period it may legally
+/// pace itself by: [`keepalive::PACING_FLOOR_NUMERATOR`] times
+/// [`PING_AFTER`] is 450, under the 480 that is
+/// [`keepalive::PACING_FLOOR_DENOMINATOR`] times this, so a dead carrier
+/// is noticed within two minutes rather than within one. The probe
+/// cadence stays under the 60 seconds where a NAT reaps an idle carrier:
+/// the period [`Keepalive::period`] picks here is just under 40 seconds
+/// and the jitter takes it to at most 48.
 pub const MAX_IDLE: Duration = Duration::from_secs(120);
 
 /// The endpoint path, relative to the provider's base URL (decision

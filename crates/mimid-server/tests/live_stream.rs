@@ -877,10 +877,11 @@ async fn key_material_over_the_limit_is_rate_limited_on_both_bindings() {
 
 /// The shortest pair the wire can carry, since both values are whole
 /// seconds (draft-atwood-mimi-keepalive-00 §4.1): one second between
-/// probes and four of idle, which is 3 x 1 < 4. The keepalive tests take
-/// seconds because of it.
+/// probes and four of idle, which is 15 x 1 < 4 x 4. The period a prober
+/// paces itself by inside it is 1.333 seconds, and the keepalive tests
+/// take seconds because of it.
 fn probe_pair() -> Keepalive {
-    Keepalive::new(1, 4).expect("3 x 1 < 4")
+    Keepalive::new(1, 4).expect("15 x 1 < 4 x 4")
 }
 
 /// The provider probes a quiet connection with a WebSocket Ping
@@ -919,7 +920,7 @@ async fn a_quiet_connection_that_states_no_keepalive_is_pinged() {
 /// The deadline is the one assertion of time in these tests, and it is
 /// what makes the test mean anything: ten seconds is longer than several
 /// of the periods the client stated and shorter than one of the
-/// provider's own, whose shortest jittered interval is 31 seconds, so
+/// provider's own, whose shortest jittered interval is 32 seconds, so
 /// only a provider pacing itself by the client's pair meets it.
 #[tokio::test]
 async fn a_connection_is_probed_on_the_pair_it_stated() {
@@ -950,7 +951,7 @@ async fn a_connection_is_probed_on_the_pair_it_stated() {
 ///
 /// The sleep is the input, not a deadline on an answer: it is how long
 /// this client stays silent. Twice the idle tolerance, because the
-/// provider gives up after four or five jittered periods, and a client
+/// provider gives up after three or four jittered periods, and a client
 /// that woke sooner would answer a buffered Ping with a Pong and keep
 /// the carrier alive. The assertion after it waits for the close with no
 /// deadline at all, so a provider that keeps the connection forever hangs
@@ -970,8 +971,8 @@ async fn a_connection_that_answers_no_ping_is_closed() {
     }
 }
 
-/// A `ClientHello` whose pair leaves no room for two probes and their
-/// answers is refused with the stream's own code
+/// A `ClientHello` whose pair leaves a prober no base period it may
+/// legally pace itself by is refused with the stream's own code
 /// (draft-atwood-mimi-keepalive-00 §4.1; bead mimid-mm42). The frame is
 /// built from CBOR rather than from [`ClientHello`], which cannot hold
 /// such a pair.
@@ -981,9 +982,10 @@ async fn a_hello_whose_keepalive_leaves_no_room_is_refused() {
 
     let text = |t: &str| Value::Text(t.to_owned());
     let server = server(true).await;
-    // Three times the interval at the idle tolerance, a pair of ones, and
-    // a zero interval.
-    for (min, max) in [(30, 90), (1, 1), (0, 10)] {
+    // Three times the interval at the idle tolerance, one second more
+    // than that (the pair of bead mimid-f9x4.1, which leaves a prober no
+    // legal base period), a pair of ones, and a zero interval.
+    for (min, max) in [(30, 90), (30, 91), (1, 1), (0, 10)] {
         let mut socket = server.connect().await;
         let frame = encode(&Value::Map(vec![
             (text("v"), Value::Uint(1)),

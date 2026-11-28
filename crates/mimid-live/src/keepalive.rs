@@ -4,8 +4,9 @@
 //! bead mimid-f9x4's design field; decision mimid-1wgh.137).
 //!
 //! - [`Keepalive`] is the pair. Only [`Keepalive::new`] builds one, so a
-//!   pair with no room for two probes and their answers cannot be held at
-//!   all: the decoder refuses the hello that carried it.
+//!   pair that leaves a prober no base period it may legally pace itself
+//!   by cannot be held at all: the decoder refuses the hello that
+//!   carried it.
 //! - [`Prober`] is the pacing: how long to stay quiet, when to probe and
 //!   when the carrier is dead. A prober that holds no pair never probes
 //!   (§4.3).
@@ -16,12 +17,31 @@
 
 use std::time::Duration;
 
-/// How many probe periods one idle period must hold:
-/// `PROBES_PER_IDLE * minIntervalSeconds < maxIdleSeconds` (§4.1). Two
+/// How many base periods one idle period must hold: a prober chooses P
+/// with `PROBES_PER_IDLE * P` less than `maxIdleSeconds` (§4.3). Two
 /// probes paced at up to 1.2 of the period account for 2.4 of it; the
 /// remaining 0.6 is the budget for the second answer to arrive, so the
 /// arithmetic cannot call a carrier alive while it is being reaped.
 pub const PROBES_PER_IDLE: u64 = 3;
+
+/// The pacing floor of §4.1 as a fraction, of which this is the
+/// numerator: one idle period must hold more than
+/// `PACING_FLOOR_NUMERATOR / PACING_FLOOR_DENOMINATOR` minimum
+/// intervals, so a pair leaves a prober room to pace itself legally when
+/// `PACING_FLOOR_NUMERATOR * minIntervalSeconds` is less than
+/// `PACING_FLOOR_DENOMINATOR * maxIdleSeconds`.
+///
+/// The ratio is 15/4, which is 3.75, in integers because both values are
+/// whole seconds, and it is derived rather than chosen:
+/// [`PROBES_PER_IDLE`] base periods to an idle period, and a base period
+/// of 1000/[`JITTER_LOW_PERMILLE`] minimum intervals, because §4.3 puts
+/// the floor on the jittered interval and not on the period. A narrower
+/// pair leaves no period a prober may legally choose (bead
+/// mimid-f9x4.1).
+pub const PACING_FLOOR_NUMERATOR: u64 = 15;
+
+/// The denominator of [`PACING_FLOOR_NUMERATOR`]'s ratio (§4.1).
+pub const PACING_FLOOR_DENOMINATOR: u64 = 4;
 
 /// How many probes go unanswered before a carrier is dead (§4.4): one
 /// lost probe, or one lost answer, is an ordinary event.
@@ -60,9 +80,11 @@ pub enum KeepaliveError {
         /// What it said.
         seconds: u64,
     },
-    /// §4.1: the idle tolerance holds no two probes and their answers.
+    /// §4.1: the idle tolerance leaves no base period a prober may
+    /// legally pace itself by.
     #[error(
-        "{PROBES_PER_IDLE} x minIntervalSeconds ({min}) is not less than maxIdleSeconds ({max})"
+        "{PACING_FLOOR_NUMERATOR} x minIntervalSeconds ({min}) is not less than \
+         {PACING_FLOOR_DENOMINATOR} x maxIdleSeconds ({max})"
     )]
     NoRoom {
         /// `minIntervalSeconds`.
@@ -106,8 +128,8 @@ impl Keepalive {
     /// # Errors
     ///
     /// [`KeepaliveError`]: either value zero or past
-    /// [`MAX_KEEPALIVE_SECONDS`], or an idle tolerance with no room for
-    /// [`PROBES_PER_IDLE`] probe periods (§4.1).
+    /// [`MAX_KEEPALIVE_SECONDS`], or an idle tolerance under the pacing
+    /// floor of [`PACING_FLOOR_NUMERATOR`] (§4.1).
     pub fn new(min_interval_seconds: u64, max_idle_seconds: u64) -> Result<Self, KeepaliveError> {
         for (name, seconds) in [
             ("minIntervalSeconds", min_interval_seconds),
@@ -120,7 +142,14 @@ impl Keepalive {
                 return Err(KeepaliveError::TooLong { name, seconds });
             }
         }
-        if min_interval_seconds.saturating_mul(PROBES_PER_IDLE) >= max_idle_seconds {
+        // In u128 because the wire carries any u64 and
+        // PACING_FLOOR_NUMERATOR x minIntervalSeconds overflows u64 for a
+        // large one. The cap above returns first for such a value; this
+        // comparison is exact for every pair of u64s rather than
+        // depending on that.
+        if u128::from(min_interval_seconds) * u128::from(PACING_FLOOR_NUMERATOR)
+            >= u128::from(max_idle_seconds) * u128::from(PACING_FLOOR_DENOMINATOR)
+        {
             return Err(KeepaliveError::NoRoom {
                 min: min_interval_seconds,
                 max: max_idle_seconds,
@@ -153,17 +182,37 @@ impl Keepalive {
     }
 
     /// The base period P a prober paces itself by: the largest whole
-    /// second with `PROBES_PER_IDLE * P` under `maxIdleSeconds`, and at
-    /// least `minIntervalSeconds` (§4.3).
+    /// millisecond satisfying both conditions §4.3 puts on P, that
+    /// `PROBES_PER_IDLE * P` is under `maxIdleSeconds` and that every
+    /// jittered interval is at least `minIntervalSeconds`.
     ///
-    /// The largest rather than the smallest, because at
-    /// P = `minIntervalSeconds` the 0.8 end of the jitter puts a probe
-    /// sooner than the responder undertook to answer; §4.3 lets a
-    /// responder refuse that one as `tooFrequent` (bead mimid-f9x4.1;
-    /// decision mimid-1wgh.137).
+    /// The largest rather than the smallest, because the floor is on the
+    /// jittered interval and not on P: at P = `minIntervalSeconds` the
+    /// 0.8 end of the jitter puts one interval in five sooner than the
+    /// responder undertook to answer, which §4.3 lets a responder refuse
+    /// as `tooFrequent` (bead mimid-f9x4.1; decision mimid-1wgh.137).
+    ///
+    /// Whole milliseconds, because a legal pair need not admit a legal
+    /// whole second: 1 and 6 leaves P between 1.25 and 2 seconds.
     pub fn period(&self) -> Duration {
-        let largest = (self.max_idle_seconds - 1) / PROBES_PER_IDLE;
-        Duration::from_secs(largest.max(self.min_interval_seconds))
+        Duration::from_millis(self.period_millis())
+    }
+
+    /// [`Keepalive::period`] in whole milliseconds.
+    fn period_millis(&self) -> u64 {
+        // The largest P with PROBES_PER_IDLE x P under maxIdleSeconds.
+        // In range: maxIdleSeconds is at most MAX_KEEPALIVE_SECONDS, so
+        // this is at most 86_400_000.
+        //
+        // That P is also at or above the jitter's floor, 1000 /
+        // JITTER_LOW_PERMILLE of minIntervalSeconds, for every pair
+        // Keepalive::new accepts: the floor in milliseconds is
+        // 1_250 x minIntervalSeconds, and it is itself a legal P exactly
+        // when 3 x 1_250 x minIntervalSeconds is under
+        // 1_000 x maxIdleSeconds, which is the rule of
+        // PACING_FLOOR_NUMERATOR with both sides divided by 250.
+        let millis = self.max_idle_seconds.saturating_mul(1_000);
+        millis.saturating_sub(1) / PROBES_PER_IDLE
     }
 
     /// One interval: [`Keepalive::period`] randomized between
@@ -172,9 +221,9 @@ impl Keepalive {
     pub fn interval(&self, random: u64) -> Duration {
         let span = JITTER_HIGH_PERMILLE - JITTER_LOW_PERMILLE + 1;
         let permille = JITTER_LOW_PERMILLE + random % span;
-        // In range: the period is at most MAX_KEEPALIVE_SECONDS, so this
-        // is at most 86_400_000 x 1_200.
-        let millis = self.period().as_secs().saturating_mul(1_000);
+        // In range: the period is under 86_400_000 ms, so this is under
+        // 86_400_000 x 1_200.
+        let millis = self.period_millis();
         Duration::from_millis(millis.saturating_mul(permille) / 1_000)
     }
 }
