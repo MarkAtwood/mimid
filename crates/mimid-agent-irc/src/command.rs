@@ -59,6 +59,11 @@
 //!   link behind the agent, so each answers the numeric that says so
 //!   rather than the 421 that would call the verb unknown (decision
 //!   mimid-1wgh.141). A command mimid does not know is still 421.
+//! - `REHASH` reads the daemon's configuration file again and answers a
+//!   NOTICE for each setting that changed, saying whether it is in use
+//!   now or needs a restart, and then 382; a reload that read nothing
+//!   gets the NOTICE alone (§7.38). `RESTART` is 481, the one numeric
+//!   Modern gives a command it calls optional.
 
 use mimid_agent_store::action::{MemberChanges, Role, SendOptions};
 use mimid_agent_store::convert::MessageRef;
@@ -174,6 +179,36 @@ fn whowas_lines(server: &str, client: &str, asked: &str, was: Option<&Was>) -> V
             ],
         ),
     ]
+}
+
+/// 382 RPL_REHASHING's `<config file>` parameter for the file at `path`,
+/// in the line this connection would be sent it on: the path, or `*`
+/// where the path cannot be written there.
+///
+/// Modern §"RPL_REHASHING (382)" shapes the line `<client> <config file>
+/// :Rehashing`, so the path is a middle parameter: one holding a space
+/// would split into two and push `Rehashing` out of place, one holding
+/// CR or LF would end the line and inject another, and an empty one or
+/// one starting with `:` would be read as the trailing parameter
+/// ([`crate::line::is_middle_param`]). A path that fits the grammar can
+/// still be long enough to carry the whole line past
+/// [`crate::line::MAX_LINE`], where cutting the last parameter would eat
+/// `Rehashing` and leave the path. That decision needs the line and not
+/// the path alone, the server's name and the client's nick being in it,
+/// so it is taken over the built line.
+fn config_file_param(server: &str, client: &str, path: &str, with_tags: bool) -> String {
+    if !crate::line::is_middle_param(path) {
+        return "*".to_owned();
+    }
+    let out = Out::new(
+        server,
+        "382",
+        vec![client.to_owned(), path.to_owned(), "Rehashing".to_owned()],
+    );
+    if out.to_wire(with_tags).len() > crate::line::MAX_LINE {
+        return "*".to_owned();
+    }
+    path.to_owned()
 }
 
 /// Whether CTCP `ctcp` (without its `\x01`s) is an ACTION.
@@ -381,6 +416,51 @@ impl Session {
             // notices already come from the service nick.
             "CONNECT" | "SQUIT" | "KILL" | "WALLOPS" => {
                 self.numeric("481", &["Permission Denied- You're not an IRC operator"]);
+            }
+            // The one operator verb whose operation a personal daemon
+            // has: mimid-agent is started from a configuration file and
+            // can read it again (class 3 of epic mimid-1wgh.140, §7.38).
+            //
+            // Why this one is not 481 like the five above. There is one
+            // user, that user runs this daemon, and asking it to re-read
+            // its own file escalates nothing. Modern §"RPL_REHASHING
+            // (382)" sends 382 to "an operator which has just
+            // successfully issued a REHASH command", and mimid has no
+            // operator state at all -- no OPER that grants it, no user
+            // mode `o`, no 381 -- so sending 382 treats the single
+            // authenticated user as the operator for this one verb. That
+            // is a deviation from the numeric's prose, and §7.38 records
+            // it.
+            //
+            // It is also why nothing on this path answers 481, which
+            // Modern §"ERR_NOPRIVILEGES (481)" defines as "the command
+            // failed because the user is not an IRC operator". Modern
+            // lets that numeric's text vary, not its condition, so 481
+            // for a REHASH this daemon cannot carry out would tell the
+            // same client it is not an operator that a readable file
+            // tells it is one. A REHASH that read nothing gets a NOTICE
+            // and no 382.
+            //
+            // No credential is read here, and adding one would be a
+            // second authorization boundary: `Session::command` runs
+            // only after registration, and until then `crate::register`
+            // answers 451. What ended registration was the credential
+            // check, or on a tailnet connection the node (§4.6); which
+            // of the two it was is the daemon's rule, not this verb's.
+            "REHASH" => self.rehash(line).await,
+            // ERR_NOPRIVILEGES, Modern §"RESTART message", which lists
+            // 481 as its only numeric and makes the command itself
+            // optional: "it may be viewed as a risk to allow arbitrary
+            // people to connect to a server as an operator and execute
+            // this command, causing (at least) a disruption to service".
+            // mimid declines it on that sentence: a daemon that restarts
+            // on a client's word fights whatever supervises it, and the
+            // operator who wants a restart has their service manager.
+            // The text of the last parameter may vary, so the refusal
+            // says which refusal it is. REHASH carries no such
+            // optionality sentence, which is where the two verbs part.
+            "RESTART" => {
+                self.numeric("481", &["mimid-agent does not restart itself"]);
             }
             other => self.numeric("421", &[other, "Unknown command"]),
         }
@@ -1556,6 +1636,89 @@ impl Session {
             }
         }
     }
+
+    /// REHASH: reads the daemon's configuration file again and says what
+    /// it could and could not apply (§7.38; bead mimid-1wgh.140.4).
+    ///
+    /// Modern §"REHASH message" gives the command "Parameters: None" and
+    /// has no MUST in it, so what is sent and in what order is this
+    /// daemon's choice: a NOTICE naming each setting that changed, then
+    /// 382 RPL_REHASHING last, when the work is already done. 382 is
+    /// therefore a report and not a promise, and a reload that read
+    /// nothing -- no file, a file that will not parse, a target that is
+    /// not this server -- sends the NOTICE alone. The NOTICEs are
+    /// mimid's own: INVENTED, NOT FROM SPEC, since Modern defines only
+    /// 382 and 481 here.
+    ///
+    /// Each NOTICE names the setting and never its value. A value in
+    /// `[tls.acme.acme_dns] password` is a secret whose type redacts its
+    /// own `Debug`, and a line built as `key = value` would carry it
+    /// past that redaction onto a wire that may be cleartext (decision
+    /// mimid-1wgh.92) and into the log.
+    ///
+    /// Modern's "Servers MAY accept, as an optional argument, the name of
+    /// a remote server that should be rehashed instead of the current
+    /// one" is a MAY, and this one does not: there is no network behind
+    /// the port (`LINKS` lists this server alone). A parameter naming
+    /// something else is refused rather than read as this server, which
+    /// is what AGENTS.md's "reject bad input rather than guessing" asks
+    /// and what `ADMIN` does with the same target. It is a NOTICE and
+    /// not the 402 `ADMIN` sends, because 402 is not among the two
+    /// numerics Modern gives this command.
+    async fn rehash(&mut self, line: &Line) {
+        let server = self.shared.server.clone();
+        if let Some(target) = line.param(0).filter(|target| !target.is_empty())
+            && target != "*"
+            && !target.eq_ignore_ascii_case(&server)
+        {
+            self.server_notice(&format!(
+                "REHASH: {server} rehashes itself only; it has no link to another server"
+            ));
+            return;
+        }
+        let Some(reload) = self.shared.reload() else {
+            self.server_notice(
+                "REHASH: this daemon was not started from a configuration file, \
+                 so there is nothing to read again",
+            );
+            return;
+        };
+        let path = reload.config_file();
+        let done = reload.reload().await;
+        if let Some(why) = &done.failed {
+            self.server_notice_cut(&format!(
+                "REHASH: {why}; every setting in use is what it was"
+            ));
+            return;
+        }
+        if done.applied.is_empty() && done.needs_restart.is_empty() {
+            self.server_notice_cut(&format!("REHASH: {path} has not changed"));
+        }
+        // One line per setting, so the output is proportional to what
+        // changed and no line has to be cut: the count is bounded by the
+        // configuration's keys and each name is short.
+        for key in &done.applied {
+            self.server_notice(&format!("REHASH: {key} is now in use"));
+        }
+        for key in &done.needs_restart {
+            self.server_notice(&format!(
+                "REHASH: {key} changed in the file and needs a restart to take effect"
+            ));
+        }
+        let shown = config_file_param(
+            &self.shared.server,
+            &self.target(),
+            &path,
+            self.caps.message_tags,
+        );
+        if shown == "*" {
+            // The path cannot be a middle parameter, so it goes where a
+            // space or a colon is allowed and CR and LF are taken out
+            // (`one_line`).
+            self.server_notice_cut(&format!("REHASH: the configuration file is {path}"));
+        }
+        self.numeric("382", &[&shown, "Rehashing"]);
+    }
 }
 
 #[cfg(test)]
@@ -1653,5 +1816,50 @@ mod tests {
         for out in &missing {
             assert_eq!(out.params[1], "SOMEONE", "{}", out.to_wire(false));
         }
+    }
+    /// Oracle: `RPL_REHASHING (382)`'s shape `<client> <config file>
+    /// :Rehashing` and the parameter grammar of Modern §"Parameters",
+    /// with its 512-octet line (§"Message Format"), written out by hand.
+    /// A configured path is not this crate's to bound, so each class the
+    /// grammar refuses becomes `*`, and so does one that fits the
+    /// grammar and not the line.
+    #[test]
+    fn a_config_path_that_cannot_be_one_parameter_is_sent_as_a_star() {
+        let param = |path: &str| config_file_param("mimid.invalid", "alice-a", path, false);
+        assert_eq!(param("/etc/mimid/agent.toml"), "/etc/mimid/agent.toml");
+        for path in [
+            "",
+            "/etc/my config.toml",
+            "/etc/a\rb.toml",
+            "/etc/a\nb.toml",
+            "/etc/a\0b.toml",
+            ":/etc/mimid.toml",
+        ] {
+            assert_eq!(param(path), "*", "{path:?}");
+        }
+        // The line and not the path decides the length: `:mimid.invalid
+        // 382 alice-a ` and the trailing `Rehashing\r\n` are in the
+        // budget too, so the longest path that fits is shorter than 512.
+        let prefix = ":mimid.invalid 382 alice-a ".len();
+        let suffix = " Rehashing\r\n".len();
+        let fits = "a".repeat(crate::line::MAX_LINE - prefix - suffix);
+        assert_eq!(param(&fits), fits);
+        let one_too_many = "a".repeat(fits.len() + 1);
+        assert_eq!(param(&one_too_many), "*");
+        // The path the grammar and the limit both allow really is one
+        // parameter of the line sent.
+        let out = Out::new(
+            "mimid.invalid",
+            "382",
+            vec![
+                "alice-a".to_owned(),
+                param("/etc/mimid/agent.toml"),
+                "Rehashing".to_owned(),
+            ],
+        );
+        assert_eq!(
+            out.to_wire(false),
+            ":mimid.invalid 382 alice-a /etc/mimid/agent.toml Rehashing\r\n"
+        );
     }
 }

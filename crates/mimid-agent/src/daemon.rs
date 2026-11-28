@@ -436,6 +436,19 @@ impl Daemon {
                         Arc::clone(tailnet) as Arc<dyn mimid_agent_irc::PeerIdentity>
                     );
                 }
+                // §7.38: REHASH reads the file this configuration came
+                // from. A configuration built in code has no file, so an
+                // embedder and every test that builds one get the
+                // REHASH that says there is nothing to read; which
+                // settings can be taken and which cannot is the
+                // `reload` module's, not the front end's.
+                if let Some(path) = config.loaded_from() {
+                    irc.enable_rehash(Arc::new(crate::reload::Reloader::new(
+                        path.to_owned(),
+                        config,
+                        Arc::clone(&store),
+                    )) as Arc<dyn mimid_agent_irc::Reload>);
+                }
                 // client-survey.md §10 S4: push on by default, with its own
                 // switch; the subscriptions in the agent's database.
                 if setting.webpush

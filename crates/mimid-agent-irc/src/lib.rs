@@ -47,6 +47,12 @@
 //!   connection's channels -- and name no host, no path and no peer
 //!   (decision mimid-1wgh.142). `LINKS` lists this server alone, which
 //!   is how a client learns there is no network behind the port.
+//! - **The daemon's own configuration** (§7.38): with `REHASH` switched
+//!   on ([`IrcFrontEnd::enable_rehash`]), `REHASH` reads the file the
+//!   daemon was started from again, puts in use what a running daemon
+//!   can take, and sends a NOTICE for every other setting that changed
+//!   saying it needs a restart; 382 follows what was done. `RESTART` is
+//!   481: the daemon leaves restarting to whatever supervises it.
 //! - **Rooms are channels** (`#name`); the client is joined to every room
 //!   the user is in. JOIN of an unknown name hosts a new room, PART leaves
 //!   the room for good (§7.1). People are nicks `<local>-<label>`
@@ -156,6 +162,19 @@
 //!   stops existing. `<count>` is accepted and not read: there is at most
 //!   one entry per nick. The `mimid` service nick is 406: it stands for
 //!   no user.
+//! - `REHASH` reads the configuration file and nothing else: not the
+//!   TLS certificate at its configured path, which Modern names as
+//!   rehash material, and not the did:webvh log file (bead
+//!   mimid-1wgh.140.9). So every setting it puts in use is one it also
+//!   names, and one it does not name did not change. Of the settings in
+//!   the file only `invites` can be taken by a running daemon; every
+//!   other one is a bound socket, an open database, the MLS identity, a
+//!   spawned loop's local or a built router, and gets a NOTICE saying it
+//!   needs a restart. That NOTICE comes on every `REHASH` until the
+//!   daemon is started again, because until then the file and the
+//!   daemon still disagree. Sending 382 at all treats the one
+//!   authenticated user as this server's operator, a state mimid keeps
+//!   nowhere else (decision mimid-1wgh.145).
 //! - A connection waits while the store's sync holds the agent, PING
 //!   included: a PONG is written only once the agent is free, so it says
 //!   the user's next message could have been taken rather than that the
@@ -293,6 +312,61 @@ impl PeerName {
         Self {
             node: node.into(),
             matched: matched.into(),
+        }
+    }
+}
+
+/// Reading the daemon's configuration file again, which `REHASH` asks
+/// for (docs/design/agent-frontends.md §7.38).
+///
+/// Which settings a running daemon can take and which need a restart is
+/// the daemon's to know, as the file itself is (mimid-agent's `reload`
+/// module). This crate only asks and says what came back, so it still
+/// holds no configuration knowledge of its own (AGENTS.md's crate map).
+pub trait Reload: std::fmt::Debug + Send + Sync {
+    /// The configuration file's path, as 382 RPL_REHASHING's `<config
+    /// file>` parameter and as the line that names it to the user.
+    fn config_file(&self) -> String;
+
+    /// Reads the file again and applies what can be applied.
+    fn reload(&self) -> std::pin::Pin<Box<dyn Future<Output = Reloaded> + Send + '_>>;
+}
+
+/// What one [`Reload::reload`] did.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Reloaded {
+    /// The settings that changed in the file and are now in use, by the
+    /// name each has in the file.
+    pub applied: Vec<String>,
+    /// The settings that changed in the file and will not take effect
+    /// until the daemon is started again, by the name each has in the
+    /// file.
+    pub needs_restart: Vec<String>,
+    /// Why nothing at all was read, in one line fit to show the user;
+    /// `None` when the file was read. The settings in use are then
+    /// exactly what they were.
+    pub failed: Option<String>,
+}
+
+impl Reloaded {
+    /// A reload that read the file: `applied` is in use, and
+    /// `needs_restart` waits for the daemon to be started again.
+    #[must_use]
+    pub fn new(applied: Vec<String>, needs_restart: Vec<String>) -> Self {
+        Self {
+            applied,
+            needs_restart,
+            failed: None,
+        }
+    }
+
+    /// A reload that read nothing, because of `why`.
+    #[must_use]
+    pub fn failed(why: impl Into<String>) -> Self {
+        Self {
+            failed: Some(why.into()),
+            ..Self::default()
         }
     }
 }

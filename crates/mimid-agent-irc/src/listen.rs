@@ -189,6 +189,16 @@ impl IrcFrontEnd {
         let _ = self.shared.peer_identity.set(identity);
     }
 
+    /// Switches on `REHASH` (docs/design/agent-frontends.md §7.38):
+    /// `reload` reads the daemon's configuration file again and says
+    /// what it could and could not apply, and the file and those
+    /// answers are the daemon's. Called once, before
+    /// [`IrcFrontEnd::serve`]; a second call changes nothing. Without
+    /// it `REHASH` says there is no file to read.
+    pub fn enable_rehash(&self, reload: Arc<dyn crate::Reload>) {
+        let _ = self.shared.reload.set(reload);
+    }
+
     /// Accepts connections until `stop` becomes true, then tells every
     /// connection the server is closing and waits for them to end.
     pub async fn serve(self, mut stop: watch::Receiver<bool>) {

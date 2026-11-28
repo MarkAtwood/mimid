@@ -116,7 +116,11 @@
 //! `mimid-agent <config.toml>`. `RUST_LOG` filters the log and defaults to
 //! `info`. SIGINT or SIGTERM stops it gracefully: no new connections, open
 //! EventSource streams end, IRC clients get `ERROR` and are closed,
-//! requests in flight and a running sync finish.
+//! requests in flight and a running sync finish. There is no SIGHUP
+//! (bead mimid-1wgh.140.10): the configuration file is read again when
+//! an IRC client sends `REHASH`, which puts `invites` in use and names
+//! every other setting that changed as one that needs a restart
+//! (docs/design/agent-frontends.md §7.38, `reload`).
 //! INFO, WARN and ERROR events have stable names (`agent_listening`, with
 //! `jmap` and `irc` saying which front ends serve, `agent_sync_failed`,
 //! ...), as in mimid-server; no token is ever logged, and no IRC line.
@@ -155,6 +159,19 @@
 //!   `canCalculateChanges` false. Which invites are joined is set by
 //!   the `invites` setting: `from-allowed` (the default) joins only
 //!   invites from users allowed.
+//! - IRC's `REHASH` reads the configuration file again, and of its
+//!   settings only `invites` reaches a running daemon (the `reload`
+//!   module, docs/design/agent-frontends.md §7.38). Every other setting
+//!   is a bound socket, an open database, the MLS identity, a spawned
+//!   loop's local variable, a built router or the global `tracing`
+//!   subscriber, and `REHASH` says so setting by setting rather than
+//!   applying half a file. `token_file` is one of them, so a rotated
+//!   server token needs a restart until `mimid_agent_core::Agent` can be
+//!   given one. The certificate at a `[tls]` path and the `[did_webvh]`
+//!   log file are not read again either, although both are re-read
+//!   elsewhere while the daemon runs (bead mimid-1wgh.140.9). A daemon
+//!   with no `[irc]` has no reload at all, and there is no SIGHUP (bead
+//!   mimid-1wgh.140.10).
 //! - With `[tailnet] identity = true` an IRC connection from a Tailscale
 //!   node the rules match registers with no credential (the [`tailnet`]
 //!   module; docs/design/frontend-auth.md §4.6, decision A7). Off by
@@ -258,6 +275,7 @@ mod http;
 mod https;
 pub mod local_ca;
 mod push;
+mod reload;
 pub mod tailnet;
 pub mod tls;
 pub mod token;

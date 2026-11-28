@@ -385,11 +385,24 @@ async fn provider(
 /// The configuration of `user`'s daemon on `server`, its files under
 /// `dir`, listening on 127.0.0.1:0 and syncing every 100 ms.
 pub fn config(server: &Server, user: &'static str, dir: &Path, invites: &str) -> Config {
+    Config::parse(&config_toml(server, user, dir, invites, "")).unwrap()
+}
+
+/// The TOML [`config`] parses, with `extra` after it: every setting
+/// written out, so a test that needs the configuration on disk can have
+/// the file say exactly what the daemon runs.
+pub fn config_toml(
+    server: &Server,
+    user: &'static str,
+    dir: &Path,
+    invites: &str,
+    extra: &str,
+) -> String {
     let name = user.rsplit('/').next().unwrap();
     let token_file = dir.join(format!("{name}-server-token"));
     std::fs::write(&token_file, format!("{}\n", server.tokens[user])).unwrap();
     let state_dir = dir.join(format!("{name}-state"));
-    Config::parse(&format!(
+    format!(
         r#"
         server_url = "{}"
         user_uri = "{user}"
@@ -399,12 +412,36 @@ pub fn config(server: &Server, user: &'static str, dir: &Path, invites: &str) ->
         sync_interval_ms = 100
         key_packages = 3
         invites = "{invites}"
+        {extra}
         "#,
         server.base,
         token_file.display(),
         state_dir.display(),
-    ))
-    .unwrap()
+    )
+}
+
+/// [`config_toml`] written to a file under `dir` and read back from
+/// there, with the path: the configuration a daemon started from this
+/// file runs, and the file `REHASH` reads again.
+///
+/// Every table the daemon runs with belongs in `extra` rather than in a
+/// field set after parsing, as the other tests here do: the reload
+/// compares the file with the settings in use, so a configuration
+/// changed in code after it was loaded would have the first `REHASH`
+/// report that change as needing a restart -- correctly
+/// (docs/design/agent-frontends.md §7.38).
+pub fn config_at(
+    server: &Server,
+    user: &'static str,
+    dir: &Path,
+    invites: &str,
+    extra: &str,
+) -> (Config, PathBuf) {
+    let name = user.rsplit('/').next().unwrap();
+    let path = dir.join(format!("{name}.toml"));
+    std::fs::write(&path, config_toml(server, user, dir, invites, extra)).unwrap();
+    let config = Config::load(&path).unwrap();
+    (config, path)
 }
 
 /// The test CA and server certificate (tests/fixtures/tls, made by its

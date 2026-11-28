@@ -243,7 +243,10 @@ read for what it sends and expects. Details are in agent-frontends.md
   (decision mimid-1wgh.141, and the class table in
   docs/design/agent-frontends.md §4). A verb it can answer truthfully is
   answered: ADMIN, LUSERS and LINKS reply with the agent's own facts
-  (decision mimid-1wgh.142).
+  (decision mimid-1wgh.142). A verb that names an operation the daemon
+  has is carried out: REHASH reads the configuration file again
+  (§7.38). RESTART stays 481, which Modern's own section invites by
+  calling the command optional.
 
 ### Messages
 

@@ -2,10 +2,11 @@
 //! mimid-sami): a counter for every one, and a line for the first of
 //! each kind in a window.
 //!
-//! Seven events fire once per item on a path whose volume someone else
-//! decides. A peer that refuses every delivery, or a sender that submits
-//! ten thousand messages whose expiry has passed, would write a line
-//! each, at the level an operator watches.
+//! Eight events fire once per item on a path whose volume someone else
+//! decides. A peer that refuses every delivery, a sender that submits
+//! ten thousand messages whose expiry has passed, or a client that sends
+//! REHASH in a loop against a configuration file that does not parse,
+//! would write a line each, at the level an operator watches.
 //!
 //! Each kept its name and its level, since they are what an operator
 //! alerts on (`welcome_too_large` is docs/operating.md's own example),
@@ -84,11 +85,15 @@ pub enum Refusal {
     /// mimid-server: a Commit whose Welcome cannot reach the new
     /// members, once per Commit (`hub::update`).
     WelcomeTooLarge,
+    /// mimid-agent: a configuration file that could not be read or
+    /// parsed again, once per attempt (`reload`). A registered IRC
+    /// client decides how many by sending REHASH.
+    AgentConfigReloadRefused,
 }
 
 impl Refusal {
     /// Every refusal, in the order their counts are observed.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::AgentMessageDiscarded,
         Self::AgentJmapPushTooLarge,
         Self::LiveStreamFrameRefused,
@@ -96,6 +101,7 @@ impl Refusal {
         Self::CatchUpRefused,
         Self::GroupInfoTooLarge,
         Self::WelcomeTooLarge,
+        Self::AgentConfigReloadRefused,
     ];
 
     /// The stable event name of the line this refusal logs, and the
@@ -110,6 +116,7 @@ impl Refusal {
             Self::CatchUpRefused => "catch_up_refused",
             Self::GroupInfoTooLarge => "group_info_too_large",
             Self::WelcomeTooLarge => "welcome_too_large",
+            Self::AgentConfigReloadRefused => "agent_config_reload_refused",
         }
     }
 

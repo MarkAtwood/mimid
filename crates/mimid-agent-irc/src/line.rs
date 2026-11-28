@@ -259,6 +259,23 @@ impl Out {
     }
 }
 
+/// Whether `text` can be sent as a parameter that is not the last one.
+///
+/// The Modern IRC Client Protocol §"Parameters" writes a middle
+/// parameter as `nospcrlfcl *( ":" / nospcrlfcl )`, where `nospcrlfcl`
+/// is any character but NUL, CR, LF, `:` and SPACE, and requires a
+/// parameter that holds a space, is empty or begins with `:` to be sent
+/// as the last one with a `:` before it. A colon anywhere after the
+/// first octet is part of one token and passes.
+///
+/// This is the grammar and not what [`Out::to_wire`] gets away with:
+/// that writes the `:` for the last parameter only, and so never has to
+/// decide about the CR, LF or NUL that no middle parameter may carry.
+#[must_use]
+pub fn is_middle_param(text: &str) -> bool {
+    !text.is_empty() && !text.starts_with(':') && !text.contains([' ', '\r', '\n', '\0'])
+}
+
 /// `text` cut into pieces of at most `max` octets each, on UTF-8
 /// character boundaries, in order; together they are `text`. A `max`
 /// smaller than one character still gives one character a piece.
@@ -451,5 +468,51 @@ mod tests {
         let mut short = Out::new("s", "TOPIC", vec!["#c".to_owned(), "hi".to_owned()]);
         short.cut_to_fit(true);
         assert_eq!(short.params[1], "hi");
+    }
+    /// Oracle: the Modern IRC Client Protocol §"Parameters", written out
+    /// by hand -- `nospcrlfcl` is "any characters except NUL, CR, LF,
+    /// colon (`:`) and SPACE", `middle ::= nospcrlfcl *( ":" /
+    /// nospcrlfcl )`, and "Parameters that contain spaces, are empty, or
+    /// begin with a `':'` character MUST be sent with a preceding
+    /// `':'`", which only the last parameter may have.
+    #[test]
+    fn is_middle_param_rejects_what_a_middle_parameter_cannot_hold() {
+        for text in [
+            "",
+            ":leading",
+            "two words",
+            "line\rbreak",
+            "line\nbreak",
+            "nul\0byte",
+            " ",
+            ":",
+        ] {
+            assert!(!is_middle_param(text), "{text:?}");
+        }
+        // A colon past the first octet is one token, and so is anything
+        // else the grammar does not name: a zero-width character is a
+        // path's business, not the wire's.
+        for text in [
+            "/etc/mimid.toml",
+            "a:b",
+            "a::",
+            "/home/\u{200b}/mimid.toml",
+            "\u{fffd}",
+        ] {
+            assert!(is_middle_param(text), "{text:?}");
+        }
+        // What passes goes out as one middle parameter and is read back
+        // as one. The `:` before a last parameter that needs none is
+        // optional (§"Parameters"), and `Out::to_wire` leaves it off.
+        let out = Out::new(
+            "s",
+            "382",
+            vec!["val".to_owned(), "a:b".to_owned(), "Rehashing".to_owned()],
+        );
+        assert_eq!(out.to_wire(false), ":s 382 val a:b Rehashing\r\n");
+        assert_eq!(
+            parse("382 val a:b Rehashing").unwrap().params,
+            ["val", "a:b", "Rehashing"]
+        );
     }
 }

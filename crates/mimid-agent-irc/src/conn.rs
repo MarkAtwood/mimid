@@ -52,6 +52,9 @@ pub(crate) struct Shared {
     /// Tailnet identity, once switched on (docs/design/frontend-auth.md
     /// §4.6): who the daemon says a peer is, before any credential.
     pub(crate) peer_identity: std::sync::OnceLock<Arc<dyn crate::PeerIdentity>>,
+    /// Reading the daemon's configuration file again, once switched on
+    /// (docs/design/agent-frontends.md §7.38): what `REHASH` asks for.
+    pub(crate) reload: std::sync::OnceLock<Arc<dyn crate::Reload>>,
     /// Every registered connection, so `/msg mimid tailnet` can list the
     /// matched nodes with their open sessions (§4.6; bead
     /// mimid-e13m.18). A connection adds itself when registration ends
@@ -114,6 +117,7 @@ impl Shared {
             part_reasons: Mutex::new(HashMap::new()),
             web_push: std::sync::OnceLock::new(),
             peer_identity: std::sync::OnceLock::new(),
+            reload: std::sync::OnceLock::new(),
             sessions: Mutex::new(BTreeMap::new()),
             next_session: std::sync::atomic::AtomicU64::new(1),
             peak_sessions: std::sync::atomic::AtomicUsize::new(0),
@@ -151,6 +155,13 @@ impl Shared {
     /// Tailnet identity, if the daemon switched it on.
     pub(crate) fn peer_identity(&self) -> Option<Arc<dyn crate::PeerIdentity>> {
         self.peer_identity.get().cloned()
+    }
+
+    /// Reading the configuration file again, if the daemon switched it
+    /// on; `None` for a daemon that was configured in code and has no
+    /// file to read.
+    pub(crate) fn reload(&self) -> Option<Arc<dyn crate::Reload>> {
+        self.reload.get().cloned()
     }
 
     /// Every registered connection, oldest first.
@@ -421,6 +432,19 @@ impl Session {
             vec![self.target(), one_line(text)],
         );
         self.send(&out);
+    }
+
+    /// Queues a NOTICE from the server to the client, cut to fit the
+    /// line limit ([`Session::send_cut`]): for text holding something
+    /// whose length is not the crate's to bound, as a configured path is
+    /// not (§7.38).
+    pub(crate) fn server_notice_cut(&mut self, text: &str) {
+        let out = Out::new(
+            &self.shared.server,
+            "NOTICE",
+            vec![self.target(), one_line(text)],
+        );
+        self.send_cut(out);
     }
 
     /// The user's own identity; registered sessions only.

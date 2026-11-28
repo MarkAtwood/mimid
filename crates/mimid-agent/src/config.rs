@@ -171,6 +171,13 @@ use std::time::Duration;
 use mimid_agent_jmap::InvitePolicy;
 use serde::Deserialize;
 
+/// The most octets of a configuration file read, at start and at every
+/// reload ([`Config::load`]). INVENTED, NOT FROM SPEC: far above any
+/// configuration anyone writes, and a bound, because IRC's `REHASH`
+/// lets a client have the file read again as often as it likes
+/// (docs/design/agent-frontends.md §7.38).
+pub const MAX_CONFIG_BYTES: u64 = 256 * 1024;
+
 /// The default [`Config::sync_interval_ms`]: the fallback poll, for
 /// while the server's EventSource is down. INVENTED, NOT FROM SPEC.
 pub const DEFAULT_SYNC_INTERVAL_MS: u64 = 30_000;
@@ -226,6 +233,11 @@ impl From<BindingSetting> for mimid_agent_core::Binding {
 }
 
 /// A parsed configuration file.
+///
+/// Built by [`Config::parse`] or [`Config::load`] and changed through
+/// its fields: it keeps the path it was read from in a private one, so
+/// nothing but a load can say where the reload reads
+/// (docs/design/agent-frontends.md §7.38).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -300,6 +312,11 @@ pub struct Config {
     /// (bead mimid-c90r).
     #[serde(default)]
     pub telemetry: Option<mimid_telemetry::TelemetryConfig>,
+    /// The file this was read from ([`Config::loaded_from`]), which the
+    /// reload reads again; never a key of the file itself, and `None`
+    /// for a configuration built in code.
+    #[serde(skip)]
+    source: Option<PathBuf>,
 }
 
 /// The `[jmap]` table.
@@ -514,18 +531,31 @@ fn default_blob_quota_count() -> u64 {
 }
 
 impl Config {
-    /// Reads and parses the configuration file at `path`.
+    /// Reads and parses the configuration file at `path`, and remembers
+    /// the path ([`Config::loaded_from`]) so that the reload can read it
+    /// again (docs/design/agent-frontends.md §7.38).
+    ///
+    /// At most [`MAX_CONFIG_BYTES`] are read, here and at every reload,
+    /// since the file is read again whenever a client asks.
     ///
     /// # Errors
     ///
-    /// [`ConfigError::Read`] if the file cannot be read, and the errors of
-    /// [`Config::parse`].
+    /// [`ConfigError::Read`] if the file cannot be read,
+    /// [`ConfigError::TooBig`] if it is longer than [`MAX_CONFIG_BYTES`],
+    /// and the errors of [`Config::parse`].
     pub fn load(path: &Path) -> Result<Self, ConfigError> {
-        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_owned(),
-            source,
-        })?;
-        Self::parse(&text)
+        let text = read_config(path)?;
+        let mut config = Self::parse(&text)?;
+        config.source = Some(path.to_owned());
+        Ok(config)
+    }
+
+    /// The file this configuration was read from; `None` for one built
+    /// in code, which [`Config::parse`] gives and which has no file to
+    /// read again.
+    #[must_use]
+    pub fn loaded_from(&self) -> Option<&Path> {
+        self.source.as_deref()
     }
 
     /// Parses configuration from TOML text.
@@ -547,6 +577,92 @@ impl Config {
         let config: Self = toml::from_str(text)?;
         config.check()?;
         Ok(config)
+    }
+
+    /// Which settings of `self`, the file as it now reads, differ from
+    /// `running`, the settings in use, split by whether a running daemon
+    /// can take them (docs/design/agent-frontends.md §7.38).
+    ///
+    /// A setting can be taken only where its value lives behind shared
+    /// mutability this path can reach. `invites` does
+    /// ([`mimid_agent_store::Store::set_invite_policy`], read again on
+    /// each sync pass); every other setting was captured at start into a
+    /// bound socket, an open database, the MLS identity, a spawned
+    /// loop's local variable, a built router or the global `tracing`
+    /// subscriber, so changing the file cannot move it.
+    ///
+    /// Written as an exhaustive destructuring on purpose: a new
+    /// top-level key does not compile until someone has decided which
+    /// side it falls on. No test can enforce that. A new key inside one
+    /// of the tables compares with the table and so lands on the
+    /// needs-restart side, which is the answer that is wrong only in
+    /// being too cautious.
+    pub(crate) fn changes_against(&self, running: &Self) -> Changes {
+        let Self {
+            server_url,
+            binding,
+            user_uri,
+            token_file,
+            state_dir,
+            listen,
+            sync_interval_ms,
+            key_packages,
+            invites,
+            allowed_origins,
+            full_tree_hubs,
+            did_webvh,
+            blob_quota_bytes,
+            blob_quota_count,
+            jmap,
+            irc,
+            tls,
+            tailnet,
+            telemetry,
+            // Not a key of the file: two configurations of the same text
+            // read from different paths have not changed.
+            source: _,
+        } = self;
+        let mut changes = Changes::default();
+        if invites != &running.invites {
+            changes.applied.push("invites");
+        }
+        for (key, unchanged) in [
+            ("server_url", server_url == &running.server_url),
+            ("binding", binding == &running.binding),
+            ("user_uri", user_uri == &running.user_uri),
+            ("token_file", token_file == &running.token_file),
+            ("state_dir", state_dir == &running.state_dir),
+            ("listen", listen == &running.listen),
+            (
+                "sync_interval_ms",
+                sync_interval_ms == &running.sync_interval_ms,
+            ),
+            ("key_packages", key_packages == &running.key_packages),
+            (
+                "allowed_origins",
+                allowed_origins == &running.allowed_origins,
+            ),
+            ("full_tree_hubs", full_tree_hubs == &running.full_tree_hubs),
+            (
+                "blob_quota_bytes",
+                blob_quota_bytes == &running.blob_quota_bytes,
+            ),
+            (
+                "blob_quota_count",
+                blob_quota_count == &running.blob_quota_count,
+            ),
+            ("[did_webvh]", did_webvh == &running.did_webvh),
+            ("[jmap]", jmap == &running.jmap),
+            ("[irc]", irc == &running.irc),
+            ("[tls]", tls == &running.tls),
+            ("[tailnet]", tailnet == &running.tailnet),
+            ("[telemetry]", telemetry == &running.telemetry),
+        ] {
+            if !unchanged {
+                changes.needs_restart.push(key);
+            }
+        }
+        changes
     }
 
     /// Checks what serde cannot. [`crate::Daemon::start`] checks again, for
@@ -683,6 +799,44 @@ fn is_origin(text: &str) -> bool {
     host_ok && port_ok
 }
 
+/// Which settings a reload found changed, and whether a running daemon
+/// could take them ([`Config::changes_against`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Changes {
+    /// The settings in use from now on, by the name each has in the file.
+    pub(crate) applied: Vec<&'static str>,
+    /// The settings that will not take effect until the daemon is
+    /// started again, by the name each has in the file.
+    pub(crate) needs_restart: Vec<&'static str>,
+}
+
+/// The text of the configuration file at `path`, at most
+/// [`MAX_CONFIG_BYTES`] of it.
+fn read_config(path: &Path) -> Result<String, ConfigError> {
+    use std::io::Read;
+
+    let read = |source| ConfigError::Read {
+        path: path.to_owned(),
+        source,
+    };
+    let file = std::fs::File::open(path).map_err(read)?;
+    let mut text = String::new();
+    // One octet past the limit, so a file exactly at it is read whole
+    // and a longer one is refused rather than parsed as its first
+    // MAX_CONFIG_BYTES, which could be valid TOML saying something the
+    // operator did not write.
+    file.take(MAX_CONFIG_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(read)?;
+    if text.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(ConfigError::TooBig {
+            path: path.to_owned(),
+            limit: MAX_CONFIG_BYTES,
+        });
+    }
+    Ok(text)
+}
+
 /// Why a configuration was refused.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -696,7 +850,20 @@ pub enum ConfigError {
         #[source]
         source: std::io::Error,
     },
+    /// The file is longer than [`MAX_CONFIG_BYTES`].
+    #[error("config file {} is longer than {limit} octets", path.display())]
+    TooBig {
+        /// The path that was being read.
+        path: PathBuf,
+        /// [`MAX_CONFIG_BYTES`].
+        limit: u64,
+    },
     /// The file is not a valid configuration.
+    ///
+    /// The variant's own wording is all that may be shown or logged: the
+    /// `toml` error it carries as its source quotes the line it stumbled
+    /// on, and the file can hold `[tls.acme.acme_dns] password`
+    /// (docs/design/agent-frontends.md §7.38).
     #[error("invalid config file")]
     Parse(#[from] toml::de::Error),
     /// `listen` is not a loopback address.
@@ -1118,5 +1285,175 @@ mod tests {
         }
         let any = Config::parse(&format!("{base}\ninvites = \"any\"")).unwrap();
         assert_eq!(InvitePolicy::from(any.invites), InvitePolicy::Any);
+    }
+    /// Every setting the reload names, named one at a time: the key the
+    /// file holds, and the side `Config::changes_against` puts it on
+    /// (docs/design/agent-frontends.md §7.38). A new top-level key is
+    /// caught by that function's exhaustive destructuring instead, at
+    /// compile time, which no test can do.
+    #[test]
+    fn changes_against_names_each_setting_that_moved() {
+        let base = format!(
+            "{}\ninvites = \"from-allowed\"\n\
+             [irc]\nserver_name = \"mimid.invalid\"\n\
+             [tls]\nsource = \"files\"\nnames = [\"a.example\"]\n\
+             [tls.files]\ncert = \"/x/cert.pem\"\nkey = \"/x/key.pem\"\n\
+             [telemetry]\nendpoint = \"http://127.0.0.1:4318\"\n",
+            config_with_listen("127.0.0.1:8484")
+        );
+        let running = Config::parse(&base).unwrap();
+        // The same text again: a reload of an untouched file names
+        // nothing, so the user is told it has not changed.
+        let changes = Config::parse(&base).unwrap().changes_against(&running);
+        assert!(changes.applied.is_empty() && changes.needs_restart.is_empty());
+        // The path the file was read from is not a setting of it: two
+        // configurations of one text loaded from different files have
+        // not changed.
+        let mut loaded = Config::parse(&base).unwrap();
+        loaded.source = Some(PathBuf::from("/x/agent.toml"));
+        let changes = loaded.changes_against(&running);
+        assert!(changes.applied.is_empty() && changes.needs_restart.is_empty());
+
+        let moved = |from: &str, to: &str| {
+            let text = base.replace(from, to);
+            assert_ne!(text, base, "{from:?} is in the configuration");
+            Config::parse(&text).unwrap().changes_against(&running)
+        };
+        // The one setting a running daemon takes.
+        let changes = moved("invites = \"from-allowed\"", "invites = \"never\"");
+        assert_eq!(changes.applied, ["invites"]);
+        assert!(changes.needs_restart.is_empty());
+        // Everything else, each by its own name, and a table by the
+        // table's: no key inside one of them is reloadable, so the table
+        // is what the report can name.
+        for (from, to, key) in [
+            (
+                "server_url = \"http://127.0.0.1:8080\"",
+                "server_url = \"http://127.0.0.1:9090\"",
+                "server_url",
+            ),
+            (
+                "listen = \"127.0.0.1:8484\"",
+                "listen = \"127.0.0.1:8485\"",
+                "listen",
+            ),
+            (
+                "user_uri = \"mimi://a.example/u/alice\"",
+                "user_uri = \"mimi://a.example/u/bob\"",
+                "user_uri",
+            ),
+            (
+                "token_file = \"/tmp/token\"",
+                "token_file = \"/tmp/token2\"",
+                "token_file",
+            ),
+            (
+                "state_dir = \"/tmp/state\"",
+                "state_dir = \"/tmp/state2\"",
+                "state_dir",
+            ),
+            (
+                "server_name = \"mimid.invalid\"",
+                "server_name = \"other.invalid\"",
+                "[irc]",
+            ),
+            (
+                "names = [\"a.example\"]",
+                "names = [\"b.example\"]",
+                "[tls]",
+            ),
+            (
+                "endpoint = \"http://127.0.0.1:4318\"",
+                "endpoint = \"http://127.0.0.1:4319\"",
+                "[telemetry]",
+            ),
+        ] {
+            let changes = moved(from, to);
+            assert_eq!(changes.needs_restart, [key], "{from:?} -> {to:?}");
+            assert!(changes.applied.is_empty(), "{from:?} -> {to:?}");
+        }
+        // A setting the running configuration left at its default is
+        // changed by a file that names it. Added above the tables, since
+        // a key after one of them would belong to it.
+        let added = |keys: &str| {
+            let text = base.replace(
+                "invites = \"from-allowed\"\n",
+                &format!("invites = \"from-allowed\"\n{keys}\n"),
+            );
+            Config::parse(&text).unwrap().changes_against(&running)
+        };
+        assert_eq!(
+            added("sync_interval_ms = 1000").needs_restart,
+            ["sync_interval_ms"]
+        );
+        assert_eq!(
+            added("key_packages = 7\nbinding = \"stream\"").needs_restart,
+            ["binding", "key_packages"]
+        );
+    }
+
+    /// AGENTS.md's limit rule over a file a client can have read again
+    /// as often as it likes (docs/design/agent-frontends.md §7.38): the
+    /// bound is at the read both the start and the reload go through, so
+    /// a file the agent started from is a file it can reload.
+    #[test]
+    fn a_config_file_over_the_limit_is_refused() {
+        let dir = std::env::temp_dir().join(format!("mimid-config-limit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("agent.toml");
+        let base = config_with_listen("127.0.0.1:8484");
+        // Comment octets up to the limit exactly, then one more. The
+        // padding is a marker, so the refusal can be shown to carry
+        // nothing of what the file holds.
+        let pad = |len: usize| format!("{base}\n# SECRET {}\n", "p".repeat(len));
+        let at_limit = MAX_CONFIG_BYTES as usize - pad(0).len();
+        std::fs::write(&path, pad(at_limit)).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            MAX_CONFIG_BYTES,
+            "the fixture is the limit exactly"
+        );
+        let config = Config::load(&path).expect("a file at the limit is read");
+        assert_eq!(config.loaded_from(), Some(path.as_path()));
+        std::fs::write(&path, pad(at_limit + 1)).unwrap();
+        let error = Config::load(&path).expect_err("one octet more is refused");
+        assert!(
+            matches!(error, ConfigError::TooBig { limit, .. } if limit == MAX_CONFIG_BYTES),
+            "{error:?}"
+        );
+        // The refusal says nothing of what the file holds.
+        assert!(!error.to_string().contains("SECRET"), "{error}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `Config::parse` builds a configuration with no file behind it,
+    /// which is what an embedder and every other test here has, and
+    /// which REHASH answers with a line saying there is nothing to read.
+    #[test]
+    fn a_parsed_configuration_was_loaded_from_nowhere() {
+        let config = Config::parse(&config_with_listen("127.0.0.1:8484")).unwrap();
+        assert_eq!(config.loaded_from(), None);
+    }
+    /// Why a refused reload may report nothing but the variant's own
+    /// wording (docs/design/agent-frontends.md §7.38): the `toml` error
+    /// under it quotes the line it stumbled on, and the one secret this
+    /// file carries inline is `[tls.acme.acme-dns] password`. The
+    /// canary over the wire and the log is mimid-agent
+    /// `tests/rehash_no_password_in_logs.rs`; this pins the two
+    /// spellings apart.
+    #[test]
+    fn a_parse_error_says_nothing_of_the_file_though_its_source_does() {
+        let secret = "acme-dns-password-5f3a1c";
+        let text = format!(
+            "{}\n[tls]\nsource = \"files\"\n[tls.acme.acme-dns]\npassword = \"{secret}\n",
+            config_with_listen("127.0.0.1:8484")
+        );
+        let error = Config::parse(&text).expect_err("the string is not closed");
+        assert_eq!(error.to_string(), "invalid config file");
+        let source = std::error::Error::source(&error).expect("the toml error is the source");
+        assert!(
+            source.to_string().contains(secret),
+            "the source quotes the line, which is why it is never shown: {source}"
+        );
     }
 }

@@ -1171,6 +1171,8 @@ From docs/irc-lessons.md "Must do":
   target naming another server), `LUSERS` (251 to 255, 265, 266) and
   `LINKS` (one 364, then 365). Each answers from the agent's own facts
   and names no host, no path and no peer.
+- **The daemon's own configuration** (class 3 below): `REHASH` reads the
+  configuration file again (§7.38), and `RESTART` is 481.
 - **Other**: `QUIT` (`ERROR :Closing Link` first). A verb mimid does not
   know gets 421; a verb it knows and cannot apply gets the numeric that
   says so, by class below.
@@ -1238,6 +1240,22 @@ The refusal comes before any parameter count, so a bare `OPER` or
 keeps a local token mistyped as OPER's password out of every variable.
 Decision mimid-1wgh.141 carries the readings, including why 723
 ERR_NOPRIVS fits none of the four and why OPER is not 464.
+
+`RESTART` is class 2 as well, and the one whose refusal Modern itself
+sanctions: "This message is optional since it may be viewed as a risk to
+allow arbitrary people to connect to a server as an operator and execute
+this command, causing (at least) a disruption to service". 481 is the
+only numeric it lists.
+
+| Verb | Answer | Why it cannot apply |
+|---|---|---|
+| `RESTART` | 481 ERR_NOPRIVILEGES | A daemon that restarts on a client's word fights whatever supervises it, and the operator who wants a restart has their service manager. Modern makes the command optional in the sentence above, which is the refusal's basis; REHASH carries no such sentence, which is where the two verbs part. |
+
+Class 3 so far:
+
+| Verb | Answer | The daemon's operation |
+|---|---|---|
+| `REHASH` | a NOTICE per setting that changed, then 382 RPL_REHASHING; a NOTICE and no 382 where nothing was read | Reads the configuration file the daemon was started from, puts in use the settings a running daemon can take, and names the rest. §7.38 holds the two lists, the rule that generates them, and why sending 382 at all is a deviation. |
 
 ## 5. The daemon
 
@@ -2472,6 +2490,170 @@ Added on 2026-11-20:
     mimid-agent-jmap `tests/chat_delete.rs` (§7.9's property in its
     eventual form: the text is in none of the database's files once the
     log is checkpointed and truncated).
+
+38. **`REHASH`: reading the configuration file again (bead
+    mimid-1wgh.140.4, decision mimid-1wgh.145).** The epic's one class-3
+    verb. The verb is the small half; the substance is which settings can
+    change under a running daemon.
+
+    **The rule that generates the two lists.** A setting can be taken by
+    a running daemon exactly when its value lives behind shared
+    mutability the reload path can reach: a lock, or a cell with a
+    setter. Everything else was captured when the daemon started, into a
+    bound socket, an open database, the MLS identity a group's leaves
+    carry, a spawned loop's local variable, a built router, or the global
+    `tracing` subscriber, which cannot be replaced at all. The rule, not
+    a judgement per key, is what the next person adding a configuration
+    key needs, and it is why the one reloadable setting needed a change
+    of its own to become one: `invites` moved into a `Mutex` in `Store`
+    with `Store::invite_policy` and `set_invite_policy`, and
+    `Store::sync` reads it once per pass into a local, so no pass weighs
+    one invite under the old policy and the next under the new.
+
+    **Applied:** `invites`.
+
+    **Needs a restart:** `server_url`, `binding`, `user_uri`,
+    `state_dir`, `full_tree_hubs` and `[did_webvh]`, all of which
+    `Agent::open` read into the MLS identity and the open transport;
+    `token_file`, which is the rotation an operator would want most and
+    is here only because `mimid_agent_core::Agent` has no token setter;
+    `listen`, `[jmap] listen_tls`, `[irc] listen`, `[irc] listen_tls` and
+    `[tls.local-ca] bootstrap`, which are bound sockets; `[irc]
+    server_name`, already sent in 001 to 005 and in the prefix of every
+    numeric; `sync_interval_ms` and `key_packages`, copied into the sync
+    loop's locals; `blob_quota_bytes` and `blob_quota_count`, plain
+    fields of a `OnceLock`; `allowed_origins`, `[jmap] enabled`,
+    `[jmap] webpush`, `[jmap] vtc` and `[irc] webpush`, which are routes,
+    a Session and capabilities built once at start; `[tls]` entire;
+    `[tailnet]` entire, read from tailscaled once and held by value; and
+    `[telemetry]` entire, since the exporter and the subscriber are
+    installed before the daemon exists. The bead guessed that the expiry
+    policy and the log level could reload: neither is a key of the file
+    at all, the first being per-room and set from IRC and the second
+    coming from `RUST_LOG`.
+
+    A table is named as a whole, because no key in any of them is
+    reloadable. A reload reports what differs, so a new key inside a
+    table lands on the needs-restart side without anyone deciding, which
+    is the answer that errs only towards caution; a new top-level key
+    does not compile, because `Config::changes_against` destructures
+    `Config` exhaustively. No test can enforce that, and that
+    destructuring is the only thing between this and the silent
+    half-reload the bead warns about.
+
+    **What one `REHASH` does, in order.** Reads the file at the
+    remembered path, at most `MAX_CONFIG_BYTES` of it, and parses and
+    checks it. On any failure nothing is applied, the settings in use
+    stay exactly as they were, a NOTICE says the file was refused, and
+    there is no 382. On success it compares the file with the settings in
+    use, applies the reloadable side, sends one NOTICE per setting that
+    changed -- in use now, or needing a restart -- or one NOTICE saying
+    the file has not changed, and sends 382 last, when the work is
+    already done. So 382 is a report and never a promise.
+
+    Only the settings that were applied are written back into the
+    settings in use. The rest still differ from the file until the daemon
+    is started again, so every `REHASH` until then names them again,
+    rather than a second `REHASH` saying nothing changed while the daemon
+    runs something else.
+
+    **`REHASH` reads the configuration file and nothing else.** Not the
+    certificate at a `[tls]` path, which Modern names as rehash material
+    ("This may include other data, such as modules or TLS certificates")
+    and which `Tls::reload_loop` re-reads on a poll; not the
+    `[did_webvh]` log and witness files, which `LogWatch` re-reads before
+    each sync. Both are re-read while the daemon runs, by something else,
+    and bead mimid-1wgh.140.9 is where whether a client may make the
+    daemon do it on demand is decided: `files` and `local-ca` stay on
+    this machine, but `tailscale` asks tailscaled and `acme` can talk to
+    a rate-limited authority, and a client can send `REHASH` in a loop.
+    The consequence for the output is the reason it matters here: every
+    setting `REHASH` puts in use is one it names, because the report is
+    driven by what differs in the file. Adding an unconditional re-read
+    would need a second line of output -- what was re-read whether or not
+    the file mentions it -- or the user would be told nothing changed
+    while a new certificate went into use.
+
+    **The two lists are NOTICEs: INVENTED, NOT FROM SPEC.** Modern
+    defines only 382 and 481 for this command and no order between
+    replies, so the ordering is this daemon's and not the spec's.
+    IRCv3's standard replies define `FAIL`/`WARN`/`NOTE <command> <code>
+    [<context>] <description>` for exactly this and recommend them "when
+    responding to a client which supports this capability"; the crate
+    does not advertise `standard-replies`, so no client here has turned
+    it on, and the capability is where that would start (bead
+    mimid-1wgh.140.6). 382 and 481 stay as numerics either way, which
+    the same document asks for.
+
+    **Each NOTICE names the setting and never its value.** The one
+    secret the configuration file carries inline is
+    `[tls.acme.acme_dns] password`, whose type redacts its own `Debug`
+    for that reason; a line built as `key = value` would carry it past
+    that redaction onto a wire that may be cleartext (decision
+    mimid-1wgh.92) and into the log. For the same reason a refused
+    reload reports the `ConfigError` variant's own wording and never the
+    error's source chain: `ConfigError::Parse` displays as "invalid
+    config file", and the `toml` error it holds as its source quotes the
+    line it stumbled on. The log event `agent_config_reload_refused` is
+    rate limited and counted in `mimid.refusals` (bead mimid-sami),
+    because a registered client decides how many there are.
+
+    **The path on the wire.** 382 is `<client> <config file> :Rehashing`,
+    so the path is a middle parameter and the client is told it. The
+    connection is the owner's, but a plain IRC listener may be off
+    loopback and in the clear, and with `[tailnet] identity = true` it
+    may have been let in by its node with no credential at all (§4.6), so
+    this is the path shown to whoever that is. It is sent as given, not
+    canonicalized: resolving symlinks would show the operator a path they
+    did not write. A path that cannot be a middle parameter -- empty,
+    holding a space, CR, LF or NUL, or starting with `:` -- and a path
+    long enough to carry the whole line past 512 octets are sent as `*`,
+    with the path in a NOTICE instead, where a space is allowed and CR
+    and LF are taken out. The length is decided over the built line,
+    since the server's name and the client's nick are in it.
+
+    **Why this verb checks no credential, and why `REHASH` is not 481
+    like the five class-2 verbs.** `Session::command` runs only after
+    registration; until then `register` answers 451 for every verb it
+    does not know, which is what keeps `REHASH` off an unauthenticated
+    connection. What ended registration was the credential check, or on
+    a tailnet connection the node, and which of the two is the daemon's
+    rule, not this verb's. Asking a daemon one user runs to re-read its
+    own file escalates nothing, which is why it is not refused. But mimid
+    has no operator state anywhere -- no `OPER` that grants it, no user
+    mode `o`, no 381 -- so sending 382 at all treats that one user as
+    this server's operator, which Modern's "sent to an operator which has
+    just successfully issued a REHASH command" does not describe.
+    Decision mimid-1wgh.145 records the reading and what follows from it:
+    having sent 382 to this client, mimid may not answer another `REHASH`
+    with 481, whose condition is "the user is not an IRC operator" and
+    whose text alone Modern lets vary. So a `REHASH` that read nothing is
+    a NOTICE and no 382 -- no configuration file, a file that will not
+    parse, a parameter naming another server -- the same shape as a
+    reload that applied nothing. meshIRCd, as a server with
+    many users must, keeps the operator concept mimid elides: its
+    `handleOPER` compares an operator password in constant time, sets
+    mode `o` and answers 381, and `handleKILL` answers 481 without it.
+
+    Modern's "Servers MAY accept, as an optional argument, the name of a
+    remote server that should be rehashed instead of the current one" is
+    a MAY, and this daemon does not: `LINKS` lists this server alone. A
+    parameter naming anything else is refused with a NOTICE and no 382
+    rather than read as this server, which is the strict answer; 402, the
+    numeric `ADMIN` sends the same target, is not among the two numerics
+    Modern gives this command.
+
+    Tests: mimid-agent-irc
+    `line::tests::is_middle_param_rejects_what_a_middle_parameter_cannot_hold`,
+    `command::tests::a_config_path_that_cannot_be_one_parameter_is_sent_as_a_star`;
+    mimid-agent `config::tests::changes_against_names_each_setting_that_moved`,
+    `config::tests::a_config_file_over_the_limit_is_refused`,
+    `config::tests::a_parse_error_says_nothing_of_the_file_though_its_source_does`;
+    mimid-agent `tests/rehash.rs` and
+    `tests/rehash_no_password_in_logs.rs`, the second being the canary
+    over the wire and the log, which fails when the error is logged as a
+    `dyn Error` and its source chain written out.
+
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)
 

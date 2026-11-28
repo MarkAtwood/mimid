@@ -78,11 +78,17 @@ pub trait Frontend: Send + Sync {
 /// Lock order: the agent lock first, then the state lock. The state lock
 /// is a `std::sync::Mutex`, never held across an await
 /// (docs/design/agent-frontends.md §2); the feed's lock is taken last and
-/// alone.
+/// alone. The invite policy's lock ([`Store::invite_policy`]) is outside
+/// that order: it is taken and dropped in one expression, holds no other
+/// lock while it is held, and is never held across an await, so it
+/// orders against nothing. Anything added beside it must keep that.
 pub struct Store {
     pub(crate) agent: Arc<AsyncMutex<Agent>>,
     pub(crate) user: String,
-    pub(crate) invites: InvitePolicy,
+    /// Which pending invites a sync joins: the `invites` setting, which
+    /// the daemon's configuration reload may change while it runs
+    /// (docs/design/agent-frontends.md §7.38).
+    invites: Mutex<InvitePolicy>,
     pub(crate) blobs: OnceLock<BlobStore>,
     /// The agent's database ([`Agent::database_path`]), where
     /// [`Store::open_database`] keeps the records.
@@ -146,7 +152,7 @@ impl Store {
             agent: Arc::new(AsyncMutex::new(agent)),
             state: Mutex::new(State::new(user.clone())),
             user,
-            invites,
+            invites: Mutex::new(invites),
             blobs: OnceLock::new(),
             did_epochs: Mutex::new(BTreeMap::new()),
             keys: Mutex::new(ulid::Generator::new()),
@@ -437,6 +443,25 @@ impl Store {
     /// Wakes whatever waits on [`Store::sync_wanted`].
     pub(crate) fn want_sync(&self) {
         self.wake.notify_one();
+    }
+
+    /// Which pending invites [`Store::sync`] joins.
+    #[must_use]
+    pub fn invite_policy(&self) -> InvitePolicy {
+        self.invites
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Joins the invites `policy` allows from now on: the daemon's
+    /// configuration reload, which reads the policy again on each sync
+    /// pass rather than at start (docs/design/agent-frontends.md §7.38).
+    ///
+    /// A pass already under way keeps the policy it read when it began,
+    /// so no one pass mixes two.
+    pub fn set_invite_policy(&self, policy: InvitePolicy) {
+        *self.invites.lock().unwrap_or_else(PoisonError::into_inner) = policy;
     }
 
     /// Every blob id the store and its front ends name: the blobs the blob

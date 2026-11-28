@@ -346,7 +346,12 @@ impl Store {
             self.set_invites(Vec::new(), changes);
             return Ok(0);
         }
-        let allowed: Vec<String> = match self.invites {
+        // Once, into a local: a configuration reload may set the policy
+        // while this pass runs (`Store::set_invite_policy`), and a pass
+        // that read it twice would weigh one invite under the old policy
+        // and the next under the new.
+        let policy = self.invite_policy();
+        let allowed: Vec<String> = match policy {
             InvitePolicy::FromAllowed => agent
                 .consents()
                 .await?
@@ -400,7 +405,7 @@ impl Store {
                         .any(|room| room.uri == parent && room.status == RoomStatus::Active)
                 });
             let accept = under_a_room_we_are_in
-                || match self.invites {
+                || match policy {
                     InvitePolicy::Any => true,
                     InvitePolicy::Never => false,
                     InvitePolicy::FromAllowed => match &details {
