@@ -69,6 +69,7 @@ from Mark Atwood's two IRC servers in Go:
   - **Storage and federation:** channels persist to JSON. Federation is
     meshIRCd's envelopes over WebSocket through Funnel, with remote users
     shown as synthetic JOIN, PART and PRIVMSG lines.
+
 ## What IRC v2 changed (epic mimid-i0id, 2026-11-22)
 
 IRC v1 was channels only, with no history (agent-frontends.md §7.2,
@@ -85,10 +86,10 @@ read for what it sends and expects. Details are in agent-frontends.md
   the user JOINs is answered with JOIN and PART of its name, as for
   `&invite-<n>` (the lesson "Answer a JOIN under the name it asked for").
 - **chathistory.** `batch`, `draft/chathistory` and `draft/event-playback`
-  from the store. The earlier lesson holds: it needed a real store keyed
-  by room, not by nick pair. Goguma uses TARGETS, BETWEEN, BEFORE and
-  `LATEST *`, by timestamp only, and waits 30 s for a `chathistory` batch
-  naming the target, so an empty range must still be an empty batch.
+  from the store, which is keyed by room, not by nick pair. Goguma uses
+  TARGETS, BETWEEN, BEFORE and `LATEST *`, by timestamp only, and waits
+  30 s for a `chathistory` batch naming the target, so an empty range must
+  still be an empty batch.
 - **Read markers** (`draft/read-marker`), the same read positions JMAP
   Chat shows. Goguma asks a query's marker with `MARKREAD <nick>` and
   drops that query's backlog if no answer comes in 15 s.
@@ -157,15 +158,14 @@ read for what it sends and expects. Details are in agent-frontends.md
     forever.
   - tailircd closed on a 5-minute read deadline without probing.
 - Answer PING with `:server PONG server :token`. irssi matches the last
-  parameter (irssi 1.4.3 took `:server PONG server :server` as its lag
-  pong, checked 2026-11-21), and tailircd's bare `PONG token` was wrong.
-- Answer it from whatever the client is really asking about. A PONG
-  written straight from the connection's own loop says the loop is
-  pumping and nothing more, so a server wedged behind its backend goes on
-  claiming to work; mimid holds the agent lock first, which is what the
-  next PRIVMSG would wait for (decision mimid-1wgh.132). The cost is that
-  a client whose ping timeout is shorter than a slow backend operation
-  gives up, which is the answer the client asked for.
+  parameter (1.4.3 took `:server PONG server :server` as its lag pong,
+  checked 2026-11-21), and tailircd's bare `PONG token` was wrong.
+- Answer a PING from what it asks about, not from the connection loop. A
+  PONG written in that loop says only that the loop is pumping, so a
+  server wedged behind its backend goes on claiming to work; mimid holds
+  the agent lock first, which is what the next PRIVMSG would wait for
+  (decision mimid-1wgh.132). The cost is that a client whose ping timeout
+  is shorter than a slow backend operation gives up.
 
 ### Line length and encoding
 
@@ -205,13 +205,13 @@ read for what it sends and expects. Details are in agent-frontends.md
   queries. Answer 324 and 329, then 367/368, 348/349 and 346/347; never 482.
   (mimid sends no 329: it knows no creation time every member shares;
   docs/design/agent-frontends.md §7.15.)
-  Textual and irssi send `MODE #c b` on every join. This is a field report:
-  meshIRCd 4a4382c, VIBED.md:269-282. RFC 2812 §3.2.3 never says this.
+  Textual and irssi send `MODE #c b` on every join. Field report: meshIRCd
+  4a4382c, VIBED.md:269-282. RFC 2812 §3.2.3 never says this.
 - **JOIN:** echo the JOIN to the joiner, then send 332 and 333 (or 331),
   then 353 and 366.
 - **Answer a JOIN under the name it asked for.** irssi 1.4.3 opens a
   window for each JOIN it sends and keeps it, active, until the server
-  answers with a JOIN of that same name. mimid-agent-irc first showed a
+  answers with a JOIN of that same name. mimid-agent-irc showed a
   pending invite as `INVITE <nick> &invite-1` and answered `JOIN
   &invite-1` with `JOIN #bside`: irssi kept a dead `&invite-1` window in
   front, and the user's next line went out as `PRIVMSG &invite-1` and got
@@ -261,14 +261,13 @@ read for what it sends and expects. Details are in agent-frontends.md
   - meshIRCd dropped silently at 5/s with a burst of 10.
   - A client that sends CAP, NICK, USER, REQ and END in one burst can lose
     its CAP END (*unverified*).
-  - A loopback front end may need no flood limit at all.
+  - A loopback front end may need no flood limit.
 
 ## Skip
 
-- SASL beyond PLAIN and SCRAM-SHA-256: EXTERNAL, OAUTHBEARER, GitHub
-  and OIDC flows. The claims in meshIRCd's
-  GITHUB.md about which clients support OAUTHBEARER are unverified;
-  check them before relying on any of them.
+- SASL beyond PLAIN and SCRAM-SHA-256: EXTERNAL, OAUTHBEARER, GitHub and
+  OIDC flows. The claims in meshIRCd's GITHUB.md about which clients
+  support OAUTHBEARER are unverified; check them before relying on them.
 - METADATA, DID tags and IDENTITY CHALLENGE.
 - WATCH (keep MONITOR at most).
 - Cloaking: use a fixed synthetic host.

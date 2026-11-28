@@ -19,9 +19,9 @@ Environment variables:
 | `RUST_LOG` | a `tracing` filter, such as `info` or `mimid_server=debug,info` | `info` | Which log events are written. |
 | `MIMID_LOG_FORMAT` | `text` or `json` | `text` (also when unset or empty) | The format of the log on standard output. `json` writes one JSON object per line, with the event's stable name in `event`, and `level`, `target`, `message`, `fields` and `spans`. Any other value stops `mimid` at startup. |
 
-The log goes to standard output. The text format does not show event names; use `json` if you need them, for example to alert on `shutdown_grace_expired` or `welcome_too_large`.
+The text format does not show event names; use `json` if you need them, for example to alert on `shutdown_grace_expired` or `welcome_too_large`.
 
-**Four events are rate limited**, because they fire once per item on a path whose volume a sender or a peer decides: `fanout_delivery_refused`, `catch_up_refused`, `group_info_too_large` and `welcome_too_large`. Each keeps the level and the name it had, so an alert on one goes on working, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line of it. A refusal of another of the four is logged at once: the minute is per event. Every one of them is counted in the metric `mimid.refusals`, by `event`, whether or not its line was written, so with a collector the count is exact even where the log is thinned. When the refusals stop, the count of the last minute is in the metric only.
+Four events are rate limited, because they fire once per item on a path whose volume a sender or a peer decides: `fanout_delivery_refused`, `catch_up_refused`, `group_info_too_large` and `welcome_too_large`. Each keeps the level and the name it had, so an alert on one goes on working, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line of it. A refusal of another of the four is logged at once: the minute is per event. Every one of them is counted in the metric `mimid.refusals`, by `event`, whether or not its line was written, so with a collector the count is exact even where the log is thinned. When the refusals stop, the count of the last minute is in the metric only.
 
 With a `[telemetry]` table, spans, the log events that `RUST_LOG` keeps, and metrics also go to an OpenTelemetry collector (see [telemetry](#telemetry)).
 
@@ -109,9 +109,9 @@ How peers prove which provider they are, and how this server proves its own iden
 
 mimid signs every request it sends to a peer with its own Ed25519 key (RFC 9421 HTTP message signatures). `mimid admin <config.toml> provider-key` prints its public half and the DNS record to publish for it.
 
-The key comes from one of two places. Set `key_file` and mimid signs with the 32-byte seed in that file — 32 raw octets or 64 hex characters, whitespace trimmed — and never writes it to the database, so you hold, back up and rotate the provider's identity with ordinary file tools. Leave `key_file` unset and mimid makes a key on first start and keeps it in the database.
+Set `key_file` and mimid signs with the 32-byte seed in that file — 32 raw octets or 64 hex characters, whitespace trimmed — and never writes it to the database, so you hold, back up and rotate the provider's identity with ordinary file tools. Leave `key_file` unset and mimid makes a key on first start and keeps it in the database.
 
-Either way `mimid admin <config.toml> provider-key --private` prints the seed as hex, so a provider's identity can be backed up or moved to another host. Treat its output as you would a TLS private key: anything holding it can sign requests as this provider. It cannot read any message — this key authenticates provider-to-provider requests and is not MLS key material.
+Either way `mimid admin <config.toml> provider-key --private` prints the seed as hex. Treat its output as you would a TLS private key: anything holding it can sign requests as this provider. It cannot read any message — this key authenticates provider-to-provider requests and is not MLS key material.
 
 To move a provider to a new host, keeping its identity and so its rooms: take the seed with `provider-key --private` on the old host, write it to a file mode 0600 on the new one, point `key_file` at it, and leave the published `<selector>._mimi.<domain>` record alone. Check `provider-key` reports the same `publicKey` on both before cutting over.
 
@@ -202,7 +202,7 @@ TLS toward peers, when `mimid` connects to their `https` base URLs.
 |---|---|---|---|
 | `roots` | list of paths | `[]` | PEM files of CA certificates trusted for peers' server certificates, in addition to the system's. |
 
-`[peer_tls.identity]` (optional): this provider's client certificate. **Naming it here presents it to nobody.**
+`[peer_tls.identity]` (optional): this provider's client certificate. Naming it here presents it to nobody.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -216,9 +216,9 @@ TLS toward peers, when `mimid` connects to their `https` base URLs.
 | `client_certificate` | bool | `false` | Present `[peer_tls.identity]` to this peer. |
 | `identity` | table | none | A `cert`/`key` pair for this peer alone, instead of `[peer_tls.identity]`, for a peer that trusts a different CA. Presented whether or not `client_certificate` is set. |
 
-**Turn `client_certificate` on only after the peer has confirmed it trusts your issuer.** Offering a client certificate a peer does not trust is strictly worse than offering none, and the failure looks like the peer being down. A peer that asks for a client certificate without requiring one — which is a common and correct configuration — rejects an untrusted one at the TLS layer, so the handshake dies before any HTTP request is sent and the RFC 9421 signature that would have authenticated you is never seen. This happened on a live host on 2026-11-22: enabling `[peer_tls.identity]` turned a working peer into `tlsv1 alert unknown ca` on every request, and removing it restored `200`. That is why the setting is per peer (bead mimid-75nk.14).
+Turn `client_certificate` on only after the peer has confirmed it trusts your issuer. Offering a client certificate a peer does not trust is worse than offering none, and the failure looks like the peer being down. A peer that asks for a client certificate without requiring one — a common configuration — rejects an untrusted one at the TLS layer, so the handshake dies before any HTTP request is sent and the RFC 9421 signature that would have authenticated you is never seen. On a live host on 2026-11-22, `[peer_tls.identity]` turned a working peer into `tlsv1 alert unknown ca` on every request, and removing it restored `200`. The setting is per peer for that reason (bead mimid-75nk.14).
 
-If `[peer_tls.identity]` is set and no peer asks for it, `mimid` logs `peer_tls_identity_unused` at WARN at startup: the certificate is configured and doing nothing. The startup event `provider_auth_configured` carries `client_certificate_peers`, the number of peers it is presented to.
+If `[peer_tls.identity]` is set and no peer asks for it, `mimid` logs `peer_tls_identity_unused` at WARN at startup. The startup event `provider_auth_configured` carries `client_certificate_peers`, the number of peers it is presented to.
 
 protocol-07 calls for mutually authenticated TLS between providers. mimid has both halves (`[tls]` or `[trusted_proxy]` inbound, `[peer_tls.identity]` outbound), but they have not been deployed or tested with another implementation, and mimid does not claim conformance to that part of protocol-07.
 
@@ -254,14 +254,14 @@ No trace context is sent to or accepted from peers. If telemetry cannot be flush
 
 `mimid-agent` takes the same table; see [the agent's guide](agent.md#telemetry).
 
-**Which spans you get depends on the span filter:** `span_level` when it is set, and otherwise `RUST_LOG`. With neither set the filter is `info`, and the spans at INFO are:
+Which spans you get depends on the span filter: `span_level` when it is set, and otherwise `RUST_LOG`. With neither set the filter is `info`, and the spans at INFO are:
 
 | Span | Opened for | Fields |
 |---|---|---|
 | `provider_auth` | every `/v1/` request carrying a `From` header | `peer`, `endpoint`, `outcome` (`authenticated`, `refused` or `observed`), then `mechanism` or `reason` |
 | `protocol_request` | every `/v1/` request that reaches its handler | `endpoint`, `peer`, and the path value under its own key (`room_id`, `target_user`, …) |
 
-At DEBUG there are more, which is why `span_level` exists, and two of them are the hops a message takes. Besides `peer_call`, which each call to a peer opens, and `jmap_asset_fetch`:
+At DEBUG there are more, two of them the hops a message takes. Besides `peer_call`, which each call to a peer opens, and `jmap_asset_fetch`:
 
 | Span | Opened for | Fields |
 |---|---|---|
@@ -307,7 +307,7 @@ With `client_idle_unbind_secs = "unlimited"` no key is unbound for being idle. E
 
 ### Message retention
 
-`mimid` keeps each message, its users' JMAP Messages and the events of the rooms it hosts as hub, for `message_retention_secs` after the hub accepted it, and then deletes it. The default is 7 days (`604800`). The shortest accepted value is one hour (`3600`); `"unlimited"` keeps everything.
+`mimid` keeps each message, its users' JMAP Messages and the events of the rooms it hosts as hub, for `message_retention_secs` after the hub accepted it, and then deletes it. The shortest accepted value is one hour (`3600`); `"unlimited"` keeps everything.
 
 ```toml
 message_retention_secs = 604800       # the default, 7 days
@@ -394,7 +394,7 @@ mimid admin b.toml token mimi://b.example/u/bob
 
 ### Moving the pair from `observe` to `enforce`
 
-`observe` lets every peer request through. To make each provider check the other's request signatures:
+To make each provider check the other's request signatures:
 
 1. Start both once, so each makes its signing key.
 2. Run `mimid admin b.toml provider-key` and take `selector` and `publicKey` from its output. Do the same for `a.toml`.

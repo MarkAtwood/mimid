@@ -31,7 +31,7 @@ The log goes to standard output. Environment variables:
 
 These are the server's variables and mean the same thing. The text format does not show event names; use `json` if you need them, for example to alert on `agent_sync_failed` or `agent_certificate_expiring`.
 
-**Three events are rate limited**, because they fire once per item on a path whose volume the sender or the server decides: `agent_message_discarded`, `agent_jmap_push_too_large` and `live_stream_frame_refused`. Each keeps its level and its name, but at most one line per minute per event is written, and that line carries `suppressed`, how many were left out of the log since the previous line of it. With `[telemetry]` configured, every one is counted in `mimid.refusals` by `event` whether or not it was logged. A discarded message is reported to the user's client as a problem of that room either way, so the window does not hide it from the person it happened to.
+Three events are rate limited, because they fire once per item on a path whose volume the sender or the server decides: `agent_message_discarded`, `agent_jmap_push_too_large` and `live_stream_frame_refused`. Each keeps its level and its name, but at most one line per minute per event is written, and that line carries `suppressed`, how many of that event were left out of the log since the previous line. With `[telemetry]` configured, every one is counted in `mimid.refusals` by `event` whether or not it was logged. A discarded message is reported to the user's client as a problem of that room either way, so the window does not hide it from the person it happened to.
 
 With a `[telemetry]` table the spans, the log events that `RUST_LOG` keeps and the metrics also go to an OpenTelemetry collector (see [`[telemetry]`](#telemetry)).
 
@@ -46,7 +46,7 @@ On first start the agent writes a token of its own to `<state_dir>/agent-token` 
 
 A client running as the same user reads it from that file.
 
-The agent token is one credential among the agent's app passwords (see [App passwords](#app-passwords)); every front end takes either. The agent keeps, for each, only a SCRAM-SHA-256 verifier in `mimid.sqlite`.
+The agent token is one credential among the agent's app passwords (see [App passwords](#app-passwords)); every front end takes either.
 
 ## App passwords
 
@@ -94,7 +94,7 @@ The file is TOML. Parsing is strict: an unknown key in any table is an error, an
 | `listen` | socket address, loopback | none; required while JMAP is on | Where the HTTP endpoint listens: JMAP Chat and the did:webvh log endpoint. It must be a loopback address (`127.0.0.1:<port>` or `[::1]:<port>`); any other is refused. With `[jmap] enabled = false` it may be left out, and then there is no HTTP listener. |
 | `sync_interval_ms` | integer, milliseconds, at least 50 | `30000` | The fallback poll. The agent follows the server's EventSource (or the live stream) and syncs as soon as it reports a change, and also syncs after this long without a sync. This is how messages arrive while the stream is down. |
 | `key_packages` | integer, 0 to 64 | `10` | How many one-time KeyPackages the agent keeps published. The count is an estimate: the agent learns that one was used only when it joins. |
-| `invites` | `"from-allowed"`, `"any"` or `"never"` | `"from-allowed"` | Which room invites the agent joins: those from users this user has allowed, all of them, or none. A **call's own room** is joined whatever this says, when its parent is a room this user is in: see below. |
+| `invites` | `"from-allowed"`, `"any"` or `"never"` | `"from-allowed"` | Which room invites the agent joins: those from users this user has allowed, all of them, or none. A call's own room is joined whatever this says, when its parent is a room this user is in: see below. |
 | `allowed_origins` | list of strings | `[]` | Web origins allowed to call the HTTP endpoint from a browser (CORS), such as `http://localhost:5173`: lowercase `http` or `https`, a host, an optional port, no path. Compared exactly with the request's `Origin`. `*` and `null` are refused. With none, the endpoint sends no CORS headers. |
 | `full_tree_hubs` | list of domains | `[]` | Provider domains of hubs whose rooms get the full ratchet tree with every Commit, for a hub that does not rebuild the tree from the Commits it sees. Other hubs get `distributionService`. The full tree grows with the room and is sent on every Commit. Compared without regard to case. |
 | `blob_quota_bytes` | integer, octets | `268435456` (256 MiB) | The most octets of uploads that no stored message refers to yet. An upload past the quota first deletes the oldest such uploads older than an hour, or is refused. |
@@ -109,19 +109,19 @@ The JMAP Chat front end. On by default.
 | `enabled` | boolean | `true` | Serve JMAP Chat at `listen`. With `false`, the HTTP listener, if `listen` is set, still serves the did:webvh log endpoint and answers `404` on the JMAP paths after the Host and credential checks. |
 | `listen_tls` | socket address | none | Where the endpoint also listens with HTTPS, on any address: a tailnet or WireGuard address is the safe choice. Needs `[tls]` and `enabled = true`. Off by default. An address that may be reachable from the internet is allowed, with a WARN at start. |
 | `webpush` | boolean | `true` | Whether a JMAP client may register for Web Push (`chatPush`). See [Push](#push-what-the-push-service-sees). |
-| `vtc` | boolean | `false` | Whether the agent offers calls: `VTCCall` and its signalling, and `VTCCall/exportMediaSecret`. **Off by default**, unlike everything else here. See below. |
+| `vtc` | boolean | `false` | Whether the agent offers calls: `VTCCall` and its signalling, and `VTCCall/exportMediaSecret`. Off by default, unlike everything else here. See below. |
 
 With `[jmap] enabled = false` and no `[irc]`, the agent would serve nothing, and the configuration is refused.
 
 #### `[jmap] vtc`: calls, and why it is off
 
-With `vtc = true` the Session advertises `urn:ietf:params:jmap:vtc` and a JMAP client can start a call in a chat, learn that one is running, exchange SDP offers, answers and ICE candidates, and fetch the call's media secret. The agent hosts the call's own MIMI room under the chat's room and carries the signalling as messages in it, so the signalling is authenticated and end-to-end encrypted like any other message. **mimid ships no media stack**: the client does the audio and video itself.
+With `vtc = true` the Session advertises `urn:ietf:params:jmap:vtc` and a JMAP client can start a call in a chat, learn that one is running, exchange SDP offers, answers and ICE candidates, and fetch the call's media secret. The agent hosts the call's own MIMI room under the chat's room and carries the signalling as messages in it, so the signalling is authenticated and end-to-end encrypted like any other message. mimid ships no media stack: the client does the audio and video itself.
 
-`VTCCall/exportMediaSecret` hands the client the call room's MLS exporter secret for the epoch the group is in. That is **input keying material** for the client's own media key schedule, never a media key: the client derives afresh for each epoch, and a membership change rekeys the call because it rekeys the room. Ask with the epoch you believe the call is in and you get `stateMismatch` with the current one rather than a secret nobody else is using.
+`VTCCall/exportMediaSecret` hands the client the call room's MLS exporter secret for the epoch the group is in. That is input keying material for the client's own media key schedule, never a media key: the client derives afresh for each epoch, and a membership change rekeys the call because it rekeys the room. Ask with the epoch you believe the call is in and you get `stateMismatch` with the current one rather than a secret nobody else is using.
 
 It is off by default because it is the one capability here that hands out key material, and because nothing implements the extension yet. While it is off the capability is absent from the Session and a request naming it in `using` gets `unknownCapability` (HTTP 400), so a client can tell "no calls here" from "calls refused".
 
-**Nothing announces a call outside its own room.** A client that cannot join a call learns nothing about it: the only signal a call exists is the MLS invite into its own room, which a client with no VTC surface cannot interpret as a call. There is no message in the parent chat and no marker for a call having ended. The `mediaTypes` and `subject` a client sets on `VTCCall/set` go no further than its own object, because the call room carries neither, so a client that joins a call it did not start learns neither; the SDP is what says which media a call carries.
+**Nothing announces a call outside its own room.** The only signal a call exists is the MLS invite into its own room, which a client with no VTC surface cannot interpret as a call. There is no message in the parent chat and no marker for a call having ended. The `mediaTypes` and `subject` a client sets on `VTCCall/set` go no further than its own object, because the call room carries neither, so a client that joins a call it did not start learns neither; the SDP is what says which media a call carries.
 
 Receiving signals needs the JMAP WebSocket at `/jmap/ws`, which the Session advertises: a call signal is an ephemeral event and the EventSource carries only "these types changed, re-fetch", which a signal is not. A client sends `VTCStreamEnable` on the socket and the agent pushes each `VTCCallSignal` as it arrives.
 
@@ -138,7 +138,7 @@ The IRC front end. Absent means no IRC. An empty `[irc]` table turns it on with 
 | `server_name` | string | `"mimid.invalid"` | The name the IRC server gives itself: at most 63 characters, letters, digits, `-` and `.`, with at least one dot and no empty label. |
 | `webpush` | boolean | `true` | Whether IRC clients may register for Web Push (the `soju.im/webpush` capability). See [Push](#push-what-the-push-service-sees). |
 
-**Calls on IRC.** A stock IRC client has no media stack and no way to exchange SDP, so it cannot join a call mimid keys. It is told about one anyway: a call started elsewhere appears in the chat's channel as a server notice — *"alice started a video call: standup — this client cannot join it"* — rather than as an ordinary message, which would look like something to act on. The call's own room gets no channel, so there is nothing to join by mistake, and `call` without a URL answers that a URL is required because IRC can send a link to a call hosted elsewhere but cannot host one itself. The `call` command still works for that link kind.
+**Calls on IRC.** A stock IRC client has no media stack and no way to exchange SDP, so it cannot join a call mimid keys. It is told about one anyway: a call started elsewhere appears in the chat's channel as a server notice — *"alice started a video call: standup — this client cannot join it"* — rather than as an ordinary message, which would look like something to act on. The call's own room gets no channel, so there is nothing to join by mistake, and `call` given no URL answers that one is required: IRC can send a link to a call hosted elsewhere but cannot host one itself.
 
 The client logs in with a credential (the token in `<state_dir>/agent-token`, or an app password) by SASL PLAIN, SASL SCRAM-SHA-256 or as its server password (`PASS`). If both SASL and PASS come, SASL decides. A client that turned on the `sasl` capability and sent no credential gets `FAIL * ACCOUNT_REQUIRED`; others get 464.
 
@@ -146,7 +146,7 @@ Failed logins are never locked out, but after 5 failures from one address in 10 
 
 ### `[tailnet]`
 
-Tailnet identity: a connection from a Tailscale node this agent recognises needs no password, because the connection itself is the login (docs/design/frontend-auth.md §4.6). **Off by default.** It applies to **IRC only** — the HTTP endpoint keeps its credential on purpose, see below.
+Tailnet identity: a connection from a Tailscale node this agent recognises needs no password, because the connection itself is the login (docs/design/frontend-auth.md §4.6). **Off by default.** It applies to IRC only — the HTTP endpoint keeps its credential on purpose, see below.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -163,11 +163,11 @@ Anything else falls back to the password rules, including tailscaled not answeri
 
 `/msg mimid tailnet` says what matched for this connection, then lists every node with a connection open and the sessions from it, and the nodes denied. `/msg mimid tailnet deny <node>` refuses a node from now on and closes its sessions at once; the list is kept in `tailnet-denied` in the state directory, so it survives a restart, and the only way to undo a denial is to edit that file — an undeny typed from a client the denied node might be holding would be a way back in.
 
-The agent reads tailscaled's `status` at start and **refuses to start** if it cannot — serving the password rules while you believe otherwise would be worse. It also refuses if this node is tagged and `owners` is empty (a tagged node has no owner to default to), so set `owners` on a tagged host.
+The agent reads tailscaled's `status` at start and refuses to start if it cannot — serving the password rules while you believe otherwise would be worse. It also refuses if this node is tagged and `owners` is empty (a tagged node has no owner to default to), so set `owners` on a tagged host.
 
 **Real revocation is the tailnet admin console.** Removing the node, letting its key expire or taking its tag away ends its sessions within `recheck_s`. A `tailnet deny` here refuses the node at this agent only: it keeps its place in the tailnet and everything else on it.
 
-**Why not JMAP.** With no `Authorization` header a request would be authorized by where it comes from, and a web page open in a browser on your laptop comes from your laptop — so any site you visit could POST JMAP calls to the agent. CORS stops such a page reading the answer, not the call happening. So JMAP keeps its credential.
+**Why not JMAP.** With no `Authorization` header a request would be authorized by where it comes from, and a web page open in a browser on your laptop comes from your laptop — so any site you visit could POST JMAP calls to the agent. CORS stops such a page reading the answer, not the call happening.
 
 With `tailscale cert` as the `[tls] source`, a phone needs only Tailscale installed, which it needs anyway to reach the agent, and the server name typed.
 
@@ -186,7 +186,7 @@ Where the certificate of the TLS listeners comes from (docs/design/frontend-auth
 
 `[tls.tailscale]` has `socket`, tailscaled's LocalAPI socket, default `/var/run/tailscale/tailscaled.sock`. tailscaled hands certificates only to root, its operator user (`tailscale set --operator=$USER`) or the uid in `TS_PERMIT_CERT_UID`; the tailnet needs MagicDNS and HTTPS certificates turned on in its admin console. The agent asks again once a day.
 
-**`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: run `mimid-agent <config.toml> setup tls`, which explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
+**`tailscale cert` makes your names public.** Every certificate a public CA issues is published in Certificate Transparency logs, which anyone can search, so the tailnet's name and the machine's name become public. The agent therefore asks first: `mimid-agent <config.toml> setup tls` explains this and asks. A yes is kept in `<state_dir>/tailscale-cert-consent` with the names; without it, or after the names change, the agent refuses to start with `source = "tailscale"`. If you do not want the names public, use your own certificate with `source = "files"`.
 
 A renewal that works logs `agent_certificate_renewed` at INFO with the new `not_after`; one that fails logs `agent_certificate_renewal_failed` at WARN, or at ERROR once the certificate in use is within 3 days of expiry, and the old certificate stays in use either way.
 
@@ -208,7 +208,7 @@ A publicly trusted certificate from an ACME authority, renewed without you, for 
 
 `[tls.acme.acme-dns]`, with `dns = "acme-dns"`: `url`, `username`, `password` and `subdomain`, all from the one-time registration at that instance.
 
-The hook is your command, the way lego's, acme.sh's and certbot's manual hooks work: the agent runs it with two arguments, the record's name and its value, and takes a zero exit as "the record is live". **It does not look the record up to confirm**, so a hook that returns before its provider has published leaves the authority to fail the challenge, and the order starts over. Give it up to two minutes.
+The hook is your command, the way lego's, acme.sh's and certbot's manual hooks work: the agent runs it with two arguments, the record's name and its value, and takes a zero exit as "the record is live". It does not look the record up to confirm, so a hook that returns before its provider has published leaves the authority to fail the challenge, and the order starts over. Give it up to two minutes.
 
 ```sh
 #!/bin/sh
@@ -247,7 +247,7 @@ In the state directory: `local-ca.key` (0600) and `local-ca.pem`, the authority;
 - **The certificate is kept** across restarts, not made fresh each time, because Goguma and Conversations remember the one they first saw and would ask again otherwise.
 - **Changing `[tls] names` remakes both**, since neither the constraint nor the certificate would cover the new names, and you install the new authority.
 
-To install it, run `mimid-agent <config.toml> setup ca`, which prints the authority's SHA-256 fingerprint and the address to open. The page at `/mimid/ca` offers the certificate as `.crt` and as an Apple configuration profile, and shows the same fingerprint: **compare the two before trusting it.** The page needs no credential — its content is the authority certificate, which the TLS listener already sends in every handshake.
+To install it, run `mimid-agent <config.toml> setup ca`, which prints the authority's SHA-256 fingerprint and the address to open. The page at `/mimid/ca` offers the certificate as `.crt` and as an Apple configuration profile, and shows the same fingerprint: compare the two before trusting it. The page needs no credential — its content is the authority certificate, which the TLS listener already sends in every handshake.
 
 A device that does not trust the authority yet cannot open that page over TLS, which is what `bootstrap` is for: it serves the same page in the clear, on an address you name, and answers 404 on every other path. It is off by default; the other way is to copy `local-ca.pem` across by hand.
 
@@ -257,14 +257,14 @@ There is no revocation: a certificate expires rather than being revoked.
 
 ### `[telemetry]`
 
-OpenTelemetry export over OTLP/HTTP, with the same keys and defaults as the server's `[telemetry]` table (see [operating.md](operating.md#telemetry)). Off when the table is absent, which is the default: the agent runs on the user's machine and exports nothing until the user names a collector.
+OpenTelemetry export over OTLP/HTTP, with the same keys and defaults as the server's `[telemetry]` table (see [operating.md](operating.md#telemetry)). Off when the table is absent, which is the default: the agent runs on the user's machine, so it exports nothing until the user names a collector.
 
 ```toml
 [telemetry]
 endpoint = "http://127.0.0.1:4318"
 ```
 
-Two differences from the server:
+Differences from the server:
 
 - `service.instance.id` is `user_uri`, so a collector that holds several agents, or an agent and its provider, can tell them apart. It also tells the collector which user this agent is; leave the table out if you do not want that.
 - The spans follow a message, not a user action: `store_send`, `store_sync` and `store_received` in the store, `agent_send_content` and `agent_receive` in the agent, and under those `mls_encrypt_and_stage`, `provider_submit`, `finish_outbox`, `provider_fetch` and `handle_message`. They are at DEBUG, which `[telemetry] span_level` exports without the log printing them. `store_send`, `agent_send_content` and `store_received` carry `msgid`, the message ID as lowercase hex, the rendering a record and an IRC `msgid` tag already use, so one message's path can be followed across both binaries. A front end's own work has no span, so a trace starts at the store.

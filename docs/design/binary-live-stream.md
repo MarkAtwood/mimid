@@ -1,8 +1,7 @@
 # A binary live stream between the agent and its provider
 
-Design note. First written 2026-11-20 against main at eedc290 for Mark's
-review; rewritten the same day after Mark's direction (below), against
-main at 3d4676a. Epic mimid-e64f.
+Design note of 2026-11-20, against main at eedc290 and 3d4676a. Epic
+mimid-e64f.
 
 ## 1. Purpose
 
@@ -11,8 +10,8 @@ through JMAP: draft-atwood-jmap-chat-mimi-00 over HTTPS, with a bearer
 token. That draft is Mark's proposal for the standard client-provider
 protocol of MIMI. MIMI protocol-07 covers only provider to provider.
 
-The live stream is a **second binding of the same client-provider
-operations**: CBOR messages over one WebSocket. Its purpose is to find
+The live stream is a second binding of the same client-provider
+operations: CBOR messages over one WebSocket. Its purpose is to find
 gaps in draft-atwood-jmap-chat-mimi-00. Writing every operation again
 without JMAP's conventions (Session, `/get` and `/changes`, state strings,
 base64url in JSON, SetErrors) shows what the draft leaves to JMAP and
@@ -71,9 +70,9 @@ How the agent hears of new messages now:
 
 ## 2. Alternatives
 
-What else could have served §1's purpose. CBOR over WebSocket was
-chosen as the smallest binding that is not JMAP and the closest to
-MIMI's own encodings (§9 question 1).
+What else could have served §1's purpose. CBOR over WebSocket is the
+smallest binding that is not JMAP and the closest to MIMI's own
+encodings (§9 question 1).
 
 - **JMAP + EventSource.** This exists today on the server. The agent
   could follow `eventSourceUrl` and run `Message/changes` on each
@@ -90,8 +89,8 @@ MIMI's own encodings (§9 question 1).
   built in. But it needs HTTP/2, codegen, and grpc-web for any browser
   client, and it does not fit MIMI's CBOR/CDDL world (mimi-content is
   CBOR).
-- **CBOR over WebSocket (this note).** Small: one framing rule, a few
-  CDDL maps, and an existing design (Agora) to copy. CBOR carries the
+- **CBOR over WebSocket (this note).** One framing rule, a few CDDL
+  maps, and an existing design (Agora) to copy. CBOR carries the
   TLS-encoded MLS bytes as opaque byte strings. WebSocket runs over the
   same TLS listener and HTTP stack as JMAP, so the token check can stay
   where it is.
@@ -162,23 +161,23 @@ for the user to hubs. So these parts of Agora do not apply:
   not a provider push proxy (decision mimid-1wgh.12.30);
 - relay federation and gossip; providers federate with protocol-07.
 
-**The keepalive is the transport's, and both ends send it** (decision
+The keepalive is the transport's, and both ends send it (decision
 mimid-1wgh.133). The binding's own messages have no ping: `ClientMessage`
-is `Hello` or `Request` and `ProviderMessage` is `Hello`, `Ack`, `Error`,
-`Deliver`, `Position` or `Changed`, and that is unchanged. Instead each
-end sends a WebSocket Ping (RFC 6455 §5.5.2) after `PING_AFTER` of quiet
--- 30 seconds, under the 60 where deployed NATs and load balancers reap
-an idle TCP connection -- and ends the connection if nothing at all has
-arrived by the next probe, so a dead carrier is noticed within a minute.
-Any frame counts as a sign of life, a Pong included: a far end answers a
-Ping only while it is reading, so a Pong proves its read loop is turning.
+is `Hello` or `Request`, and `ProviderMessage` is `Hello`, `Ack`,
+`Error`, `Deliver`, `Position` or `Changed`. Each end sends a WebSocket
+Ping (RFC 6455 §5.5.2) after `PING_AFTER` of quiet -- 30 seconds, under
+the 60 where deployed NATs and load balancers reap an idle TCP
+connection -- and ends the connection if nothing at all has arrived by
+the next probe, so a dead carrier is noticed within a minute. Any frame
+counts as a sign of life, a Pong included: a far end answers a Ping only
+while it is reading, so a Pong proves its read loop is turning.
 
-What that asserts is that the pipe is there and the far end is reading,
-and not that the provider can serve a request. A provider wedged behind
-its database still answers Pings. The probe that would assert the second
-thing belongs in MIMI, which defines no keepalive at all (protocol-07 and
-the other drafts have no ping, pong, heartbeat or liveness in them; bead
-mimid-f9x4 drafts what one would have to say).
+A Ping says the pipe is there and the far end is reading. It does not say
+the provider can serve a request: one wedged behind its database still
+answers Pings. A probe for that belongs in MIMI, which defines no
+keepalive at all (protocol-07 and the other drafts have no ping, pong,
+heartbeat or liveness in them; bead mimid-f9x4 drafts what one would have
+to say).
 
 ## 5. Version 1
 
@@ -201,9 +200,8 @@ request may name it in `using` while it is listed.
 
 The stream does not depend on it: a client that knows `server_url` opens
 the stream without reading JMAP, and once connected it needs nothing from
-JMAP. What the
-Session's mimi capability says (userUri, roomIdPrefix, hubSender, ...)
-the `ProviderHello` says (§5.11).
+JMAP. What the Session's mimi capability says (userUri, roomIdPrefix,
+hubSender, ...) the `ProviderHello` says (§5.11).
 
 ### 5.2 Configuration switch
 
@@ -270,9 +268,9 @@ wait depends on the other requests. A request over the account's
 (crates/mimid-server/src/jmap/rate.rs; bead mimid-e64f.21), is
 `rateLimited` with `retryAfter`, as on JMAP. The agent waits it out,
 1 s when `retryAfter` is absent, at most 30 s and three times, then
-reports the error. JMAP's limit is 4 requests in
-flight per account (crates/mimid-server/src/jmap/api.rs:72), each
-carrying one method call here.
+reports the error. JMAP's limit is 4 requests in flight per account
+(crates/mimid-server/src/jmap/api.rs:72), each carrying one method call
+here.
 
 ### 5.5 Positions and resume
 
@@ -330,8 +328,8 @@ named Chat only the Messages whose ids sort after the one given (Message
 ids sort in the order they were stored, findings log F2 and F12). This
 is the stream's form of `Message/query` sorted by `id` with an `anchor`,
 which the agent uses on JMAP after `cannotCalculateChanges`. `after`
-with `since` is `badMessage`. One `Subscribe` per
-connection; a second gets `badMessage`.
+with `since` is `badMessage`. One `Subscribe` per connection; a second
+gets `badMessage`.
 
 The agent's own messages still come back, as on JMAP; it skips them by
 the `messageIds` of the `Send` or `Update` `Ack` (findings log F18), and
@@ -343,8 +341,8 @@ by digest when an answer named none.
 `Chat`, `KeyPackage`, `Consent` and `Client` (bead mimid-e64f.22),
 computed as the EventSource computes its `StateChange` (eventsource.rs).
 It is sent only after a `Subscribe`. The client then lists what it wants
-again (`ListChats`, `ListKeyPackages`, `ListConsent`, `ListClients`). Messages need no notice: they arrive
-as `Deliver`s.
+again (`ListChats`, `ListKeyPackages`, `ListConsent`, `ListClients`).
+Messages need no notice: they arrive as `Deliver`s.
 
 ### 5.7 Identifiers
 
@@ -442,9 +440,9 @@ Each JMAP method of the draft in mimid-server becomes two layers:
 
 The stream handler calls the same core function and writes the result as
 CBOR; an error's `type` becomes the `Error` `code` of the same name.
-Where the JMAP layer itself refuses something (a body
-over `maxSizeRequest`, a bad `accountId`), the stream has its own
-check, listed in §5.8 and §5.3.
+Where the JMAP layer itself refuses something (a body over
+`maxSizeRequest`, a bad `accountId`), the stream has its own check,
+listed in §5.8 and §5.3.
 
 ### 5.11 Messages
 
@@ -594,12 +592,11 @@ Chat do.
 `Deliver` carries a whole FanoutMessage, so Welcomes arrive the same way
 as on JMAP (draft-atwood-jmap-chat-mimi-00 §application/mimi-fanout,
 stored only for the account that owns the named KeyPackageRef). Unlike
-Agora, Welcomes do travel on this stream (compare Agora §11, opening).
+Agora, they travel on this stream (compare Agora §11, opening).
 
 ## 6. Later, if needed
 
-Each gets a version bump or new
-`t` values negotiated in the hello.
+Each gets a version bump or new `t` values negotiated in the hello.
 
 - **WebTransport.** One bidirectional stream carrying a CBOR sequence
   (RFC 8742), as Agora §11.1 and §11.4. Needs HTTP/3 in mimid-server.
@@ -647,7 +644,7 @@ Each gets a version bump or new
 
 ## 8. Implementation plan
 
-Each step is its own commits and its own bead under mimid-e64f. Every
+Each step has its own commits and its own bead under mimid-e64f. Every
 gap found on the way goes into the findings log with file:line
 references.
 
@@ -679,19 +676,17 @@ boundary table.
 ## 9. Questions answered by Mark
 
 All six answered by Mark on 2026-11-20, each a decision bead under
-mimid-1wgh (§8 step 1). Where the answer differed from what this note
-recommended, it says so. On the same day Mark set the purpose of §1,
-which moved every "later" item of the first version (sends, room
-creation, KeyPackages, key material, consent, notices) into version 1.
+mimid-1wgh (§8 step 1). On the same day Mark set the purpose of §1,
+which puts sends, room creation, KeyPackages, key material, consent and
+notices in version 1.
 
 1. **Build it now, or wait for a concrete need?** Build the stream now,
-   not the EventSource step first. This differs from the
-   recommendation, which was to make the agent follow the server's
-   EventSource and run `Message/changes` on each StateChange, as a small
-   change to code that exists, and to build the stream only once
-   something showed the remaining costs mattered: measured round-trip
-   latency, base64 cost on large Commits or Welcomes, a mobile client,
-   or a second implementation that wanted it.
+   not the EventSource step first. The alternative was to make the agent
+   follow the server's EventSource and run `Message/changes` on each
+   StateChange, a small change to code that exists, and to build the
+   stream only once something showed the remaining costs mattered:
+   measured round-trip latency, base64 cost on large Commits or
+   Welcomes, a mobile client, or a second implementation that wanted it.
 2. **Token in the hello, or on the upgrade header?** In the
    `ClientHello`, checked by the same code as the JMAP `Account`
    extractor. The header form needs no new check code but shuts out
@@ -701,9 +696,8 @@ creation, KeyPackages, key material, consent, notices) into version 1.
    and `frank`, or one `Error` carrying the refusal; other traffic flows
    meanwhile, so nothing blocks behind a slow hub. §5.4 applies the same
    rule to every request that goes to a hub.
-4. **Position as the JMAP Message state string?** Yes. The agent keeps
-   no new state, and catch-up and stream meet at one value. Whether it
-   holds up is recorded in the findings log.
+4. **Position as the JMAP Message state string?** Yes; whether it holds
+   up is recorded in the findings log.
 5. **Strict CBOR decoding?** Strict: reject duplicate keys, indefinite
    lengths, non-shortest integers and trailing bytes; accept any key
    order.

@@ -482,6 +482,7 @@ step runs the full check list in AGENTS.md before its commit.
    `attachments_are_checked_against_the_blob_store_and_limits`,
    `attachments_travel_sealed_and_arrive_whole`, the edits, moderation
    and report tests.
+
    Built (2026-11-20):
 
    - `mimid-agent-store::action`: one `Store` method per action of the
@@ -522,16 +523,15 @@ step runs the full check list in AGENTS.md before its commit.
    - The run-time rule of §7.7 and §7.8 keeps only what is still
      reachable: a ReadPosition may name a Chat the store does not hold,
      and a Message or ChatBan of a destroyed Chat keeps its room key
-     (until §7.9, which deletes them).
-     Records name users by URI and no longer come from JMAP objects, so
-     an unknown user (`Sender::Unknown`, `None` as a participant, banned
-     user or banner) is no longer made. Bead mimid-1vul.11 then removed
-     the forms: every participant, sender, banned user and banner is a
-     URI, and the database's schema version is 2 (a version-1 database
-     is refused, §7.10).
-     A JMAP object naming a ChatContact a client destroyed renders the
-     user as `UNKNOWN_ID`, and `ext["jmap"]` keeps the object's id, as in
-     step 4.
+     (until §7.9, which deletes them). Records name users by URI and no
+     longer come from JMAP objects, so an unknown user
+     (`Sender::Unknown`, `None` as a participant, banned user or banner)
+     is no longer made. Bead mimid-1vul.11 then removed the forms: every
+     participant, sender, banned user and banner is a URI, and the
+     database's schema version is 2 (a version-1 database is refused,
+     §7.10). A JMAP object naming a ChatContact a client destroyed
+     renders the user as `UNKNOWN_ID`, and `ext["jmap"]` keeps the
+     object's id, as in step 4.
    - A write makes no person record; the next sync makes one for each
      participant it sees, as before. A room `create_room` records gets
      its participants and roles from the agent at once, not at the next
@@ -581,12 +581,12 @@ step runs the full check list in AGENTS.md before its commit.
      crash window: a record that a sync or another front end made is
      saved with its JMAP object, so step 4's load rule (no `ext["jmap"]`
      means no object) loses nothing. Rendering records without `ext` at
-     load was the other choice. It cannot give a Chat's `members` or
-     other JMAP-only properties exactly, so it was not taken here; §7.11
-     takes it for records made while JMAP was off, with those properties
-     made as a first sync makes them. The projector does
-     not use the bounded log, so a large sync round never makes it
-     `TooOld`. `Commit` is gone, and `Store::sync()` takes no argument.
+     load cannot give a Chat's `members` or other JMAP-only properties
+     exactly, so it is not done here; §7.11 does it for records made
+     while JMAP was off, with those properties made as a first sync makes
+     them. The projector does not use the bounded log, so a large sync
+     round never makes it `TooOld`. `Commit` is gone, and
+     `Store::sync()` takes no argument.
    - JMAP's own writes reach the feed too, so other front ends learn of
      them. An added record whose object exists (made by a JMAP hook)
      writes nothing. A changed record writes only what differs. The
@@ -673,10 +673,9 @@ step runs the full check list in AGENTS.md before its commit.
      endpoint alone.
    - `Daemon::store()` exposes the `Arc<Store>`; the new test reads the
      records through it.
-   - Found: records stored while JMAP is off carry no `ext["jmap"]`, so
-     turning JMAP on again showed none of them (step 4's load rule).
-     Mark chose to render them from the records (§7.11, bead
-     mimid-1vul.12).
+   - Records stored while JMAP is off carry no `ext["jmap"]`, so turning
+     JMAP on again showed none of them (step 4's load rule). Mark chose
+     to render them from the records (§7.11, bead mimid-1vul.12).
    - Tests: config unit tests for the defaults, every new key, refusing a
      non-loopback `[irc].listen`, bad server names, unknown keys in both
      tables and JMAP off without `[irc]`; `tests/jmap_off.rs`, a daemon
@@ -707,20 +706,20 @@ step runs the full check list in AGENTS.md before its commit.
    - `JOIN 0` leaves every room the connection shows, each as PART does
      (§7.1): a PART line per channel from the user's own mask, reason
      `left every room`, and each room's record leaving, then left
-     (§7.12). It was refused at first.
+     (§7.12).
    - PRIVMSG to a nick is 404 naming the nick ("JOIN a new channel and
      INVITE them", §7.2); to an unknown nick 401.
    - The service has `help`, `allow`, `deny` and `invites`, and since
      bead mimid-e64f.23 `devices` and `forget-device <id>`
      (draft-atwood-jmap-chat-mimi-00 §Clients: list the clients bound to
      the account, and forget a lost one, which removes its leaves from
-     the rooms this device shares with it). JOIN and PART
-     make and leave rooms (§7.1), and JOIN of a pending invite's name
-     accepts it (§7.13), so
-     `create`, `leave` and `join` are gone; `remove` and `report` are not
-     in v1. `deny` revokes the consent record, so the inviter can no
-     longer fetch the user's KeyPackages: their INVITE fails at their own
-     agent (`NoConsent`), and no invite reaches the user at all.
+     the rooms this device shares with it). JOIN and PART make and leave
+     rooms (§7.1), and JOIN of a pending invite's name accepts it
+     (§7.13), so `create`, `leave` and `join` are gone; `remove` and
+     `report` are not in v1. `deny` revokes the consent record, so the
+     inviter can no longer fetch the user's KeyPackages: their INVITE
+     fails at their own agent (`NoConsent`), and no invite reaches the
+     user at all.
    - Every line written is at most 512 octets with its tags, the stricter
      reading of irc-lessons.md. The topic is `<name> | <room URI>`. 329
      and 333 give the time in the room record's key (when this store
@@ -804,12 +803,12 @@ step runs the full check list in AGENTS.md before its commit.
      agent's database). A crash before (a) commits decrypts again; between
      (a) and (b) the journal delivers again; before (b) commits both roll
      back and the journal delivers again; after it nothing comes again.
-     Receive, store and acknowledge in a single transaction was not done:
-     the store's part runs front ends' `before_save`, attachment fetches
-     and joins, all async, and front ends save on their own, so it would
-     hold a write transaction across awaits and mix front-end saves into
-     the agent's commit. The journal stays, as the hand-off between the
-     two transactions.
+     Receive, store and acknowledge are not one transaction: the store's
+     part runs front ends' `before_save`, attachment fetches and joins,
+     all async, and front ends save on their own, so one transaction
+     would be held across awaits and would mix front-end saves into the
+     agent's commit. The journal stays, as the hand-off between the two
+     transactions.
    - A leave this agent commits from inside a Message (the lowest
      remaining leaf commits a member's leave proposals) is sent between
      two transactions: the first ends with the Message's position
@@ -893,10 +892,10 @@ step runs the full check list in AGENTS.md before its commit.
       alias) is not stored again. `Store::send`, `edit` and `retract`
       keep the agent locked until their record or alias is in, so a sync
       cannot store the journal's copy first.
-    - Proposals and external Commits did not go through the outbox at
-      first: their digests were saved before they left, and what the agent
-      did next (a room marked as being left, a room joined) could be lost.
-      §7.19 puts them in the outbox too.
+    - Proposals and external Commits go in the outbox too (§7.19).
+      Outside it their digests were saved before they left, and what the
+      agent did next (a room marked as being left, a room joined) could
+      be lost.
     - Receiving: a Message is skipped if its id is among the kept
       `messageIds`, if its digest is the agent's, or if its Chat's last
       handled Message (`State::last_handled`) has an id that does not sort
@@ -970,9 +969,9 @@ src/service.rs   the `mimid` service nick
 - After registration send 900 with the user's nick as the account name
   and the user URI in the text, and 330 in WHOIS, which gives the user
   URI as the account (§7.15).
-- AGENTS.md's boundary table gains a row: Agent (loopback IRC), the local
-  token by PASS. That is one check at the IRC boundary, with a test that a
-  wrong token is refused.
+- AGENTS.md's boundary table gains the row for the IRC boundary's one
+  check: Agent (loopback IRC), the local token by PASS, with a test that
+  a wrong token is refused.
 
 Several IRC connections at once are fine. Each is the same user, as with a
 bouncer, and each sees every change.
@@ -1109,11 +1108,10 @@ From docs/irc-lessons.md "Must do":
   on; a longer line gets 417, not a disconnect. Write lines of at most 512
   octets with prefix and tags; split 353; unescape tags per the spec.
 - **Channels**: `JOIN`, `PART` (question 1), `TOPIC` (read; set is the
-  room's subject, §7.14),
-  `NAMES`, `MODE` (queries answer 324, no 329 (§7.15), then 367/368,
-  348/349 empty, 346/347 empty; never 482 for a query; `+o -o +b -b`),
-  `KICK`,
-  `INVITE`, `LIST` (322 per room, then 323).
+  room's subject, §7.14), `NAMES`, `MODE` (queries answer 324, no 329
+  (§7.15), then 367/368, 348/349 empty, 346/347 empty; never 482 for a
+  query; `+o -o +b -b`), `KICK`, `INVITE`, `LIST` (322 per room, then
+  323).
 - **Users**: `WHO` (always ends 315), `WHOIS` (always ends 318, with 401
   first for an unknown nick), `ISON`, `USERHOST`, `AWAY` (305 and 306; no
   301, since MIMI carries no presence).
@@ -1124,10 +1122,10 @@ From docs/irc-lessons.md "Must do":
 - **Flood control**: none on loopback.
 - **The `mimid` service nick** (INVENTED, NOT FROM SPEC, documented in the
   crate): `allow <nick|uri|user@domain>`, `deny <nick|uri|user@domain>`,
-  `invites`, `join
-  <number>`, `create <name>`, `leave #c`, `remove #c <nick>` (the user
-  leaves the participant list), `report <msgid> [reason]`, `help`. These
-  are what IRC has no command for (question 5).
+  `invites`, `join <number>`, `create <name>`, `leave #c`,
+  `remove #c <nick>` (the user leaves the participant list),
+  `report <msgid> [reason]`, `help`. These are what IRC has no command
+  for (question 5).
 
 ## 5. The daemon
 
@@ -1175,8 +1173,8 @@ These override anything in §4 that disagrees.
 1. **PART and JOIN.** PART leaves the room for real: every device of the
    user leaves, and only a new invite brings them back. JOIN of a channel
    name that is not one of the user's rooms hosts a new room with that
-   name. The IRC front end does what IRC users expect; closing a window in
-   a client that sends PART has the same effect.
+   name. Closing a window in a client that sends PART has the same
+   effect.
 2. **No queries in v1.** v1 has channels only. A PRIVMSG to a nick
    answers with an error that tells the user to make a room and invite
    them. No `direct` flag. (Lifted for IRC v2 by S2, §7.25; the store's
@@ -1248,11 +1246,11 @@ Added on 2026-11-20:
     state. Nothing runs in production, so there are no old files: the
     store starts from an empty database, and the agent neither reads nor
     writes `chat.json`. There is no format-1 reader and no conversion; a
-    later schema change refuses an older database clearly rather than
-    converting it. The SQLite crate is the one mimi-mls already uses.
+    later schema change refuses an older database rather than converting
+    it. The SQLite crate is the one mimi-mls already uses.
     Whether the records can share `mls.sqlite` and one transaction with
-    the MLS state is bead mimid-1vul.10. They can: §3 step 9 puts them, the
-    MLS state, the agent's state and the journal in one file,
+    the MLS state was bead mimid-1vul.10. §3 step 9 puts them, the MLS
+    state, the agent's state and the journal in one file,
     `mimid.sqlite`, which replaces `chat.sqlite`.
 
 11. **JMAP built from the store (Mark, 2026-11-20).** When the JMAP front
@@ -1305,8 +1303,7 @@ Added on 2026-11-20:
 
 12. **JOIN 0 leaves every room (Mark, 2026-11-20).** `JOIN 0` is honoured
     as IRC defines it: the user leaves every room, for real, as §7.1 makes
-    PART leave. The first v1 front end refused it with a NOTICE; bead
-    mimid-1vul.13 changed that:
+    PART leave. Bead mimid-1vul.13 built it:
 
     - `JOIN 0` (the whole parameter; a `0` inside a list is a channel name
       and refused as one) leaves each room the connection shows through
@@ -1319,13 +1316,13 @@ Added on 2026-11-20:
 
 13. **A pending invite under its room's channel name (Mark,
     2026-11-21).** irssi 1.4.3 keeps a window for every JOIN it sends
-    until the server answers it under the same name. The first front end
-    showed a pending invite as `INVITE <nick> &invite-<n>` and answered
-    `JOIN &invite-<n>` with `JOIN #<room>`, so irssi kept a dead
-    `&invite-<n>` window active and the user's next line went to
-    `PRIVMSG &invite-<n>`, which got 403 (bead mimid-br6m). Of the two
-    ways out, Mark chose to show the invite under the room's real
-    channel name, with `&invite-<n>` only as a fallback:
+    until the server answers it under the same name. Showing a pending
+    invite as `INVITE <nick> &invite-<n>` and answering
+    `JOIN &invite-<n>` with `JOIN #<room>` therefore leaves irssi with a
+    dead `&invite-<n>` window active, and the user's next line goes to
+    `PRIVMSG &invite-<n>`, which gets 403 (bead mimid-br6m). Mark chose
+    to show the invite under the room's real channel name, with
+    `&invite-<n>` only as a fallback:
 
     - The store reads each pending invite's Welcome at the sync by
       staging it without joining (`Agent::invite_details`, through
@@ -1663,11 +1660,10 @@ Added on 2026-11-20:
 24. **Calls to join (Mark, 2026-11-21; bead mimid-0p8s).** mimi-content-10
     §5.10 carries a conference join URL as a part of disposition
     `session` (7), the example an unencrypted ExternalPart with the URL
-    and a description. Before this, the agent took every ExternalPart for
-    an attachment: it asked its provider to fetch the join URL (mimid's
-    hub refuses a host that is no peer provider's; another provider might
-    fetch it), stored the message with an empty body, and IRC showed
-    nothing.
+    and a description. Taking such a part for an attachment asks the
+    provider to fetch the join URL (mimid's hub refuses a host that is no
+    peer provider's; another provider might fetch it), stores the message
+    with an empty body and shows nothing on IRC.
     - **Received.** A session part, external or inline, at the top level
       or in a top-level `processAll` MultiPart, is never fetched
       (`ReceivedMessage::attachments` leaves it out;
@@ -1961,20 +1957,20 @@ Added on 2026-11-20:
       participant list, so §7.1's "PART leaves the room for real" cannot
       hold for one: nobody can invite them back, and they can return on
       their own (`canAddOwnClient`). Decided 2026-11-22 (bead
-      mimid-2vcw): option B. PART and
-      JMAP Chat destroy on a direct room hide it locally, the devices
-      stay, and the next message brings it back; option A (remove all
-      the user's own devices, staying a participant) may come later as a
-      separate explicit action. IRC's half is built (§7.32). JMAP Chat's
-      half is built too: `Chat/set` destroy of a direct Chat whose room
-      is active calls `Store::hide_room` instead of `Store::leave`. The
-      record goes with its messages, as §7.9 deletes them, and a
-      `hiddenRoom` tombstone keeps every sync from making it again, while
-      the agent stays in the room with every device and sends nothing.
-      The next new message in the room (not an edit, retraction or
-      reaction) whose hub acceptance time is later than every message
-      the record held brings it back at once, in the sync that stores
-      it, as a new record (a new Chat) holding that message;
+      mimid-2vcw): option B. PART and JMAP Chat destroy on a direct room
+      hide it locally, the devices stay, and the next message brings it
+      back; option A (remove all the user's own devices, staying a
+      participant) may come later as a separate explicit action. IRC's
+      half is built (§7.32). JMAP Chat's half is built too: `Chat/set`
+      destroy of a direct Chat whose room is active calls
+      `Store::hide_room` instead of `Store::leave`. The record goes with
+      its messages, as §7.9 deletes them, and a `hiddenRoom` tombstone
+      keeps every sync from making it again, while the agent stays in the
+      room with every device and sends nothing. The next new message in
+      the room (not an edit, retraction or reaction) whose hub acceptance
+      time is later than every message the record held brings it back at
+      once, in the sync that stores it, as a new record (a new Chat)
+      holding that message;
       `Store::open_direct` with the other user brings it back too, empty.
       Other events of the room are dropped while it is hidden.
     - **JMAP Chat.** A direct room is a Chat of kind `direct` whose
@@ -1996,11 +1992,11 @@ Added on 2026-11-20:
 
 30. **Attachment links (epic mimid-qqtk, bead mimid-qqtk.5; decision
     mimid-1wgh.88).** For front ends whose clients cannot send the
-    bearer header JMAP download needs (IRC v2, Matrix, XMPP): a URL on
-    the agent's HTTP listener that gives one attachment's plaintext.
-    This is a per-blob link with an expiry; it adds the
-    route and the second authorization at the agent boundary that §7.4
-    left out of IRC v1. IRC v1 still shows no attachments.
+    bearer header JMAP download needs (IRC v2, Matrix, XMPP): a per-blob
+    URL on the agent's HTTP listener, with an expiry, that gives one
+    attachment's plaintext. It adds the route and the second
+    authorization at the agent boundary that §7.4 left out of IRC v1.
+    IRC v1 still shows no attachments.
     - **Form.** `GET /attachment/<blobId>/<expires>/<mac>/<name>`:
       `expires` in seconds since the UNIX epoch; `mac` the first 16
       octets, in hex, of HMAC-SHA256 under the link key over
@@ -2201,15 +2197,14 @@ Added on 2026-11-20:
       Each push is one line as the client's connection would show it,
       the message's first line cut to 400 octets, tags only `msgid` and
       `time`. At most 20 per subscription for one save's changes.
-    - **Connected or not.** The epic's brief said to push while the
-      client is disconnected; the survey said "while no client is
-      attached". Goguma shows no notification of its own for lines it
-      reads live once it holds a push subscription
-      (`lib/client_controller.dart:1137-1141`), so pushing only while it
-      is away would lose every notification while its connection lives
-      in the background. The agent pushes to every subscription whether
-      a client is connected or not, as soju does. This is a choice about
-      when, inside S4's "on by default"; it changes no decision.
+    - **Connected or not.** The agent pushes to every subscription
+      whether a client is connected or not, as soju does, which is a
+      choice about when inside S4's "on by default". Goguma shows no
+      notification of its own for lines it reads live once it holds a
+      push subscription (`lib/client_controller.dart:1137-1141`), so
+      pushing only while the client is away, as the epic's brief and the
+      survey ("while no client is attached") asked, would lose every
+      notification while its connection lives in the background.
     - **Minimal payloads.** The plaintext is padded to 1024 octets, so
       every push is the same size; the relay sees the endpoint, the
       time, the urgency (`high` for a message or invite, `normal` for a
@@ -2272,9 +2267,9 @@ Added on 2026-11-20:
 
 Mark decided on 2026-11-20 that JMAP (draft-atwood-jmap-chat-mimi) is
 the standard client-provider protocol and the agent's default, so the
-agent's live delivery comes from JMAP push. Until then the daemon polled
-every 2 s and never listened to the EventSource mimid-server serves
-(crates/mimid-server/src/jmap/eventsource.rs).
+agent's live delivery comes from JMAP push: the EventSource mimid-server
+serves (crates/mimid-server/src/jmap/eventsource.rs), which the daemon
+follows instead of polling.
 
 - **What wakes the sync.** `Store::sync_wanted()` stays the one trigger.
   A task of the daemon (crates/mimid-agent/src/push.rs) follows the
@@ -2346,10 +2341,10 @@ A call has its own MIMI room, parent-dependent on the chat it belongs to
 (room-policy-04 §5), and its media key is that room's own
 `SafeExportSecret(media_keys)` (mls-extensions-11 §4.4;
 draft-atwood-mimi-calls). Nothing is sent to key it: every member of the
-call's group derives the same secret from the epoch it is already in.
-That is the whole reason the call needs a room of its own, because §4.4's
-secret belongs to the entire group and confines nothing to a subset of
-it. Decisions mimid-1wgh.110 to mimid-1wgh.113.
+call's group derives the same secret from the epoch it is already in. The
+call needs a room of its own because §4.4's secret belongs to the entire
+group and confines nothing to a subset of it. Decisions mimid-1wgh.110 to
+mimid-1wgh.113.
 
 - **The primitive.** `HostOptions::parent` (and `HostOptions::child_of`)
   asks for a parent-dependent room: `parent_dependant` with the parent's
