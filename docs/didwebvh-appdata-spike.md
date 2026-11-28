@@ -11,9 +11,9 @@ handling of `with_heads`, `PendingGroupContextExtensions`) are gone, and the
 scenario tests below are regular tests. The component ID defaults to the
 private-use 0xF013 and stays a setting (decision mimid-1wgh.4.81.35); a
 keyMaterial request from a `did_webvh` room requires the credential type and
-takes it to imply the component (decision mimid-1wgh.4.81.36). References
-below to the extension form, the switch and the extension-form tests
-describe the code before the switch.
+takes it to imply the component (decision mimid-1wgh.4.81.36). The
+extension form below is the draft's, and was mimid's until the switch; the
+line counts are the spike's estimates.
 
 **Question.** draft-atwood-mls-didwebvh-credential keeps the
 `did_webvh_heads` record as a GroupContext extension, changed by a
@@ -33,20 +33,23 @@ the component, and close Open Issues 1 and 5 with it.
 
 ## The prototype
 
-A switch on the code points, so the extension form stays the default and
-every existing test runs unchanged:
+The spike added the component form behind a switch on the code points, so
+the extension form stayed the default and every existing test ran
+unchanged. There is no switch now: the component is the only form, and its
+ID is a setting whose default is the private-use `0xf013`
+(mls-extensions-11 §7.5), with the draft's suggested credential type
+(`crates/mls-didwebvh/src/config.rs`):
 
 ```rust
-let cp = CodePoints::SUGGESTED.with_heads_component(0xf013)?;
+let cp = CodePoints::new(0x0008, 0xf013)?; // == CodePoints::DEFAULT
 ```
 
-`0xf013` is a private-use component ID (mls-extensions-11 §7.5). Every
-member of a group must use the same code points, as with the existing
-credential and extension types.
+Every member of a group must use the same code points, as with the existing
+credential type. There is no `did_webvh_heads` extension type any more.
 
-What changes when the switch is on:
+What the component form changes against the draft's extension form:
 
-| Where | Extension form (draft -01) | Component form (spike) |
+| Where | Extension form (draft -01) | Component form (mimid) |
 |---|---|---|
 | Record | `did_webvh_heads` GroupContext extension | entry `0xf013` of the GroupContext `app_data_dictionary` |
 | Changed by | one GCE proposal carrying the whole extension list | one or more AppDataUpdate proposals |
@@ -70,33 +73,36 @@ the hub never see it. `Member::commit` sends the whole expected record and,
 the first time a record appears in a group, also extends `app_components`
 by AppDataUpdate.
 
-Code: `crates/mls-didwebvh/src/config.rs` (the switch),
+Code: `crates/mls-didwebvh/src/config.rs` (the code points),
 `crates/mimi-mls/src/didwebvh.rs` (`heads`, `apply_heads_updates`,
 `record_updates`, `required_removes`, `check_external_join`),
 `crates/mimi-mls/src/member.rs` (create, commit, external join, the
 component in `resolve_app_data_updates`), `crates/mimi-mls/src/identity.rs`
-(the leaf lists the component). About 350 lines added; nothing in the hub.
+(the leaf lists the component). About 350 lines added by the spike; nothing
+in the hub.
 
 ## Scenarios
 
 | Scenario | Extension form | Component form | Test |
 |---|---|---|---|
-| Revocation Commit while an unrelated GCE proposal is pending | refused, `PendingGroupContextExtensions` (`didwebvh_rogue::a_pending_group_context_extensions_proposal_blocks_the_record_change_but_not_the_update`) | **passes**; the GCE (it adds an external sender) and the record change both take effect | `didwebvh_appdata::a_revocation_commits_while_an_unrelated_group_context_extensions_proposal_is_pending` |
+| Revocation Commit while an unrelated GCE proposal is pending | refused, `PendingGroupContextExtensions` | **passes**; the GCE (it adds an external sender) and the record change both take effect | `didwebvh_appdata::a_revocation_commits_while_an_unrelated_group_context_extensions_proposal_is_pending` |
 | Update-proposal fallback (another member commits the revoking device's Update) with the GCE still pending | refused the same way (feedback item 28) | **passes**; the hub's `did_webvh_required_removes` names the revoked leaf | `didwebvh_appdata::the_update_proposal_fallback_commits_with_a_pending_group_context_extensions_proposal` |
 | Two record changes in one Commit: a device's partial update by reference, plus the committer's own | impossible: one GCE per Commit, and a GCE replaces the whole list | **passes**; two AppDataUpdates for the record, applied in order; both users' heads raised | `didwebvh_appdata::two_record_changes_compose_in_one_commit` |
-| A device whose log is newer than the record joins by external Commit | refused, `ExtensionMismatch` (`didwebvh_group::a_device_not_yet_in_the_record_cannot_join_externally`) | **passes**; the joiner raises its entry in the external Commit | `didwebvh_appdata::a_device_newer_than_the_record_joins_by_external_commit` |
+| A device whose log is newer than the record joins by external Commit | refused, `ExtensionMismatch` | **passes**; the joiner raises its entry in the external Commit | `didwebvh_appdata::a_device_newer_than_the_record_joins_by_external_commit` |
 | Removing the record | refused, `HeadsRemoved` | refused, `InvalidAppDataUpdate` | `didwebvh_appdata::removing_the_record_component_is_refused` |
-| Hub: a record update that revokes a device but does not remove it | refused by the rules | refused by the rules | `hub_didwebvh_appdata::a_record_update_that_breaks_the_rules_is_refused` |
-| Hub: a revocation with the required Remove, in a room whose roles lack `canRemoveOwnClient` | accepted through the decision .22 GCE exception | accepted, no GCE at all and no hub change | `hub_didwebvh_appdata::a_revocation_by_app_data_update_passes_room_policy` |
+| Hub: a record update that revokes a device but does not remove it | refused by the rules | refused by the rules | `hub_didwebvh::a_commit_that_breaks_the_did_webvh_rules_is_refused` |
+| Hub: a revocation with the required Remove, in a room whose roles lack `canRemoveOwnClient` | accepted through the decision .22 GCE exception | accepted, no GCE at all and no hub change | `hub_didwebvh::a_revocation_commit_needs_no_can_remove_own_client` |
 
 The mimi-mls tests are in `crates/mimi-mls/tests/didwebvh_appdata.rs`, the
-hub tests in `crates/mimid-server/tests/hub_didwebvh_appdata.rs`. The
-unrelated GCE proposal, and the hub tests' rule-breaking Commits, come from
-a plain OpenMLS client that knows nothing of the draft. Two mutations show
-that the tests can fail: an update function that keeps only the first
-entry of each update fails all five mimi-mls tests, and a
-`required_removes` that ignores the record's AppDataUpdate fails the hub
-revocation test.
+hub tests in `crates/mimid-server/tests/hub_didwebvh.rs`. The extension-form
+tests the first column names went with the form;
+`didwebvh_group::a_device_not_yet_in_the_record_joins_externally_and_raises_it`
+now asserts the join the extension form refused. The unrelated GCE proposal,
+and the hub tests' rule-breaking Commits, come from a plain OpenMLS client
+that knows nothing of the draft. Two mutations show that the tests can
+fail: an update function that keeps only the first entry of each update
+fails all five mimi-mls tests, and a `required_removes` that ignores the
+record's AppDataUpdate fails the hub revocation test.
 
 ## What mls-extensions-11 allows and forbids that matters
 
@@ -179,13 +185,13 @@ revocation test.
   standalone record update that names an SCID with no leaf. This is
   narrower than Open Issue 5: it takes a bad proposal, not any unrelated
   one.
-- **Implementation size.** About 350 lines for the switch, plus tests.
-  Replacing the extension form instead of adding a switch would delete
-  more than it adds (below).
+- **Implementation size.** About 350 lines for the spike's switch, plus
+  tests. Replacing the extension form rather than keeping both deleted more
+  than it added (below).
 
 ## What the hub no longer needs
 
-With the component form only:
+With the component form the only form, these are gone:
 
 - `ProposalKind::DidWebvhRecord` (mimi-mls observer and hub policy) and
   `didwebvh::is_record_change` with its test: about 130 lines.
@@ -298,12 +304,16 @@ Component Types" registry (mls-extensions-11 §7.5): Value TBD2, Name
 - **mls-rs.** Answered since: stock mls-rs has no AppDataUpdate and
   its custom-proposal API cannot carry one, so a second implementation
   cannot follow without a change to mls-rs (didwebvh-mls-rs.md).
-- **Agents.** The agent's fallback logic (bead mimid-1wgh.4.81.28) was not
-  rerun in component form; the mimi-mls test of the fallback stands in
-  for it. A pending GCE cannot reach a mimid agent through a mimid hub
+- **Agents.** Answered since: the agent's fallback test (bead
+  mimid-1wgh.4.81.28) runs in component form against a real hub, with the
+  Commit failure injected because a pending GCE no longer makes the Commit
+  fail; the mimi-mls test of the fallback is what runs it with a pending
+  GCE. A pending GCE cannot reach a mimid agent through a mimid hub
   anyway (decision mimid-1wgh.6.2), so the collision is between mimid and
   other hubs or clients.
-- **Hub KeyPackage requirements** (decision mimid-1wgh.4.81.24) still ask
-  for the `did_webvh_heads` extension type; in component form they would
-  ask for the component in the leaf's `app_components` instead. Not
-  changed.
+- **Hub KeyPackage requirements.** Answered since: decision
+  mimid-1wgh.4.81.24 had a keyMaterial request carry the `did_webvh_heads`
+  extension type, which means nothing now, and decision mimid-1wgh.4.81.36
+  replaced it with the `did_webvh` credential type, taken to imply the
+  component in the leaf's `app_components`, because protocol-07's
+  RequiredCapabilities has no field for components.

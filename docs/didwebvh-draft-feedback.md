@@ -627,6 +627,12 @@ record may remove such members (what mimid does). The extension form (GCE)
 would let RFC 9420-only stacks change the record, but it brings back items 18,
 24 and 28. The better fix is AppDataUpdate in the MLS libraries.
 
+**Status:** true of the draft as written, where OpenMLS refuses every record
+change while such a member is in the group. Not true of mimid since bead
+mimid-4lp4.3 (decision mimid-1wgh.4.81.37): a Commit that changes the record
+removes those members, so a revocation goes through; what it costs is that
+every record change drops them.
+
 ## Section 7, item 7: the encoding question
 
 What implementing -00 taught about "Encoding without DIDs":
