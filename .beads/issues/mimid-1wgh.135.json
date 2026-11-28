@@ -1,0 +1,25 @@
+{
+  "id": "mimid-1wgh.135",
+  "title": "An embedder deleting a message is not covered by the checkpoint",
+  "description": "Found while landing the write-ahead log (decision mimid-1wgh.134, commit 99ddbc9c).\n\nThe rewritten chat_delete test proves the agent's own deletion property: after a destroy and a `wal_checkpoint(TRUNCATE)`, a destroyed chat's text is in none of mimid.sqlite, -wal or -shm. Nothing checkpoints on the delete path, so between a delete and SQLite's own checkpoint the plaintext is still in mimid.sqlite, which mimid-1wgh.134 accepted for the daemon.\n\nAn embedder is not covered by that acceptance, because nobody asked it. purple-mimi and the mobile app of decision mimid-1wgh.39 embed mimid-agent-core and mimid-agent-store in their own process and hold the user's plaintext in this database (docs/design/purple-mimi.md §12.1). A desktop or phone app that deletes a message and is then killed, or whose user expects the bytes gone when the UI says gone, keeps them until a checkpoint that may never come while the app runs.\n\nmimid-agent-core's `# Limitations` now tells an embedder to run `wal_checkpoint(TRUNCATE)` itself if a deletion must reach the disk at once. Nothing enforces it and nothing tests it.\n\nTHE CHOICE, which is Mark's: leave it as a documented obligation on the embedder; or give the store a \"destroy and checkpoint\" call that does both, so an embedder gets the property by calling the obvious thing, at the cost of a checkpoint per deletion for whoever calls it. The second keeps the daemon's fast path and gives the strict path a name.\n",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T02:08:00.75375013Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T02:08:00.75375013Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.135",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T02:08:00.80756272Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
