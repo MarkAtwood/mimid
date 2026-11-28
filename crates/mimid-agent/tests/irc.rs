@@ -493,6 +493,50 @@ async fn registration_queries_and_refusals() {
         [ALICE_NICK, ALICE_NICK, ALICE, "is logged in as"]
     );
 
+    // WHOWAS answers for a nick this run gave and always ends with 369;
+    // a missing nick is a single 431, with no 369 after it (decision
+    // mimid-1wgh.143).
+    irc.send("WHOWAS").await;
+    irc.send(&format!("WHOWAS {ALICE_NICK} 2")).await;
+    irc.send("WHOWAS ALICE-A").await;
+    irc.send("WHOWAS nobody-x").await;
+    // The service is not a MIMI user, and one nick is read, not a list.
+    irc.send("WHOWAS mimid").await;
+    irc.send(&format!("WHOWAS {ALICE_NICK},mimid")).await;
+    let answers = irc.sync().await;
+    let codes: Vec<&str> = answers.iter().map(|m| m.command.as_str()).collect();
+    assert_eq!(
+        codes,
+        [
+            "431", "314", "312", "369", "314", "312", "369", "406", "369", "406", "369", "406",
+            "369"
+        ],
+        "{answers:#?}"
+    );
+    // 314 carries what WHOIS 311 carries, the user URI as the realname.
+    assert_eq!(
+        answers[1].params,
+        [ALICE_NICK, ALICE_NICK, "alice", "a.example", "*", ALICE]
+    );
+    // 312's server info describes the server and says since when the
+    // nick has stood for this user.
+    assert_eq!(answers[2].params[1..3], [ALICE_NICK, SERVER]);
+    assert!(
+        answers[2]
+            .text()
+            .starts_with("mimid-agent; this run has had this nick since 2"),
+        "{}",
+        answers[2].raw
+    );
+    // `WHOWAS ALICE-A` is answered under the nick as the daemon gave it.
+    assert_eq!(answers[4].params[1], ALICE_NICK);
+    // 406 names the nick as the client spelled it.
+    assert_eq!(
+        answers[7].params,
+        [ALICE_NICK, "nobody-x", "There was no such nickname"]
+    );
+    assert_eq!(answers[11].params[1], format!("{ALICE_NICK},mimid"));
+
     // JOIN of a name that is no room hosts one (§7.1).
     irc.send("JOIN #lobby").await;
     let names = joined(&mut irc, ALICE_MASK, "#lobby").await;

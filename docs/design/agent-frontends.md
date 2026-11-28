@@ -1021,6 +1021,30 @@ never change, so logs and scripts keep working.
 - **Hostmask**: `<nick>!<local>@<domain>`, the provider domain from the
   URI. It is stable, truthful and needs no cloak. WHOIS 311 carries the
   full URI as the real name, and 320 the did:webvh DID if there is one.
+  The domain is shown with every character outside `[A-Za-z0-9.-]` as
+  `_`: `mimi://<domain>/u/<local>` admits any non-empty domain, a user
+  URI reaches the front end from a peer and from the client's own line,
+  and Modern says 311's and 314's `<host>` cannot start with a `:`, which
+  a client would read as the start of the trailing parameter. A space
+  there would split the parameter after it. The user URI itself is shown
+  as it is.
+- **When a nick was given**: a nick is stamped with the time it was
+  given, and WHOWAS answers with it. Within one run nothing is ever
+  taken back: a nick is bound to a user in one function and never
+  unbound, so there is at most one entry per nick and the time is a
+  "known here since". The derivation is not injective — two URIs with
+  the same local part and the same first DNS label want the same nick,
+  and the second is suffixed — so which user holds the bare nick depends
+  on who arrived first, and that order can differ between runs, since a
+  kept `ext["irc"]["nick"]` is given again when it is malformed or was
+  taken first. That reassignment happens only at startup, inside the
+  load, before any connection exists. So the one case where a nick
+  changes meaning is exactly the one an in-memory stamp cannot report:
+  the client's scrollback outlives the only record. Decision
+  mimid-1wgh.143 keeps the smaller claim, in memory for the life of the
+  run and never in the store, where it would become a durable record of
+  whom the user talked to; bead mimid-1wgh.140.8 holds the persisted
+  version for Mark to decide on.
 - **Server name**: `mimid.invalid` by default. It has a dot, so clients do
   not read the prefix as a nick.
 - **Channels**: `#` and the room's `room_name`, with characters outside
@@ -1137,8 +1161,9 @@ From docs/irc-lessons.md "Must do":
   query; `+o -o +b -b`), `KICK`, `INVITE`, `LIST` (322 per room, then
   323).
 - **Users**: `WHO` (always ends 315), `WHOIS` (always ends 318, with 401
-  first for an unknown nick), `ISON`, `USERHOST`, `AWAY` (305 and 306; no
-  301, since MIMI carries no presence).
+  first for an unknown nick), `WHOWAS` (class 1 below; always ends 369,
+  with 406 first for a nick this run has not given), `ISON`, `USERHOST`,
+  `AWAY` (305 and 306; no 301, since MIMI carries no presence).
 - **Messages**: `PRIVMSG` (412 for no text), `NOTICE` (never an error
   answer; to a peer it is sent as a plain message), `TAGMSG` (read and
   dropped).
@@ -1180,9 +1205,13 @@ Each verb gets a row here as it lands. Class 1 so far:
 | `LUSERS` | 251 RPL_LUSERCLIENT, 252 RPL_LUSEROP, 253 RPL_LUSERUNKNOWN, 254 RPL_LUSERCHANNELS, 255 RPL_LUSERME, 265 RPL_LOCALUSERS, 266 RPL_GLOBALUSERS | One user, invisible (mimid answers `221 +i`), on zero *other* servers; zero operators, since OPER is 491; the connections admitted and not logged in; the channels this connection shows, a one-to-one room being a query and not a channel; and the user's clients, which is the multi-device fact IRC has nowhere else, with the most seen at one time since the daemon started. Not the user's MLS devices and not their JMAP clients: the plaintext layer knows the first not at all and counts the second nowhere. |
 | `LINKS` | one 364 RPL_LINKS, then 365 RPL_ENDOFLINKS | This server alone: `<server1>` and `<server2>` both this server, hopcount 0, the server info WHOIS 312 sends. Modern lets a server omit any server on the network, itself included, so one self-entry is the true answer for a network of one and the way a client learns there is none. Not the provider and not a peer: they are not IRC servers, and listing them would describe mimid's topology to anything that asks. |
 
-Each of the three answers while a sync holds the agent, touching neither
-it nor the store, and each runs only after registration, so a connection
-that has shown no credential gets 451 and learns none of this. Modern
+| `WHOWAS` | 314 RPL_WHOWASUSER, 312 RPL_WHOISSERVER, then 369 RPL_ENDOFWHOWAS; 406 ERR_WASNOSUCHNICK then 369 for a nick this run has not given; a single 431 ERR_NONICKNAMEGIVEN with no nick at all | Which MIMI user a nick stands for and since when this run has had it, in 314's parameters and 312's server info. 314 is what WHOIS 311 says of the same user, down to the user URI as the realname, so the two verbs cannot disagree. Not which user a nick used to stand for: see "When a nick was given" in §4 "Names". Modern calls WHOWAS a question about "a nickname which no longer exists", and a mimid nick never stops existing, so answering for a live nick is mimid's own deviation and the only version of the verb with something true to say. The `mimid` service nick is 406, since it stands for no user and must not be shown as one. One nick is read, Modern's `<nick>`, not RFC 2812's comma list, and `<count>` is accepted and not read, there being at most one entry per nick. |
+
+Each of the first three answers while a sync holds the agent, touching
+neither it nor the store, and each of the four runs only after
+registration, so a connection that has shown no credential gets 451 and
+learns none of this. `WHOWAS` reads the nicks held in memory and no
+record, so it does not wait on the agent either. Modern
 gives `LUSERS` and `LINKS` "Parameters: None", so a parameter is read as
 nothing rather than answered 461 or 402; RFC 2812's `<mask>` and
 `<server mask>` are not these commands. Decision mimid-1wgh.142 carries

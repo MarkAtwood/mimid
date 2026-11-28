@@ -47,6 +47,9 @@
 //!   `LIST`, `WHO` (always ends 315), `WHOIS` (always ends 318, 330 giving
 //!   the user URI as the account), `ISON`, `USERHOST`,
 //!   `AWAY` (305, 306), `MOTD` (422), `PING`, `PONG`, `QUIT`, `CAP`.
+//! - `WHOWAS` (314, 312, then 369; 406 then 369 for a nick this run has
+//!   not given; always ends 369) says which MIMI user a nick stands for
+//!   and since when (decision mimid-1wgh.143).
 //! - `ADMIN` (256 to 259, and 402 for a target that is not this server),
 //!   `LUSERS` (251 to 255, 265, 266) and `LINKS` (one 364, then 365)
 //!   answer from the agent's own facts and name no host, no provider and
@@ -63,12 +66,114 @@ use mimid_agent_store::record::Key;
 
 use crate::conn::{Session, VERSION, one_line};
 use crate::line::{Line, Out};
-use crate::names::{Held, SERVICE_NICK, fold, is_channel_name, parse_user_address, parse_user_uri};
+use crate::names::{
+    Held, SERVICE_NICK, Was, fold, is_channel_name, parse_user_address, parse_user_uri,
+};
+use crate::render::server_time;
 
 /// The message a line replies to: `+draft/reply`, or `+reply`, which
 /// Goguma sends beside it (goguma 5aa7baa5 `lib/client.dart:1359-1363`).
 fn reply_tag(line: &Line) -> Option<&str> {
     line.tag("+draft/reply").or_else(|| line.tag("+reply"))
+}
+
+/// The nick `WHOWAS` asks about: its first parameter. Modern gives the
+/// command "Parameters: `<nick> [<count>]`", so the nick is the first,
+/// not the last as in WHOIS, and one nick, not RFC 2812's comma list
+/// (decision mimid-1wgh.143).
+fn whowas_nick(line: &Line) -> Option<&str> {
+    line.param(0).filter(|nick| !nick.is_empty())
+}
+
+/// How `WHOWAS <asked>` is answered: one entry, or none.
+///
+/// Modern ("WHOWAS message"): "Servers MUST reply with either
+/// ERR_WASNOSUCHNICK (406) or a non-empty list of WHOWAS entries, both
+/// followed with RPL_ENDOFWHOWAS (369)", and "A WHOWAS entry is a series
+/// of numeric messages starting with RPL_WHOWASUSER (314), optionally
+/// followed by other numerics relevant to that user, such as ...
+/// RPL_WHOISSERVER (312)". The numbers are
+/// ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml; the parameters of
+/// each are that document's `RPL_WHOWASUSER (314)`,
+/// `RPL_WHOISSERVER (312)`, `RPL_ENDOFWHOWAS (369)` and
+/// `ERR_WASNOSUCHNICK (406)`, none of which RFC 2812 gives a `<client>`.
+///
+/// 314 carries what WHOIS 311 carries: the user URI as the realname, the
+/// URI's local part and domain as the hostmask parts, and a literal `*`
+/// before the realname, which "does not mean anything". 312's
+/// `<server info>` stays a description of the server, as it is in WHOIS,
+/// and names in the same breath since when this run has had the nick:
+/// INVENTED, NOT FROM SPEC, and not a bare timestamp, which would read
+/// as when the user was first met (decision mimid-1wgh.143).
+///
+/// The found lines name the nick as this run gave it; 406 and the 369
+/// after it name the nick as the client spelled it, since there is no
+/// other spelling to give. 314's and 312's last parameters go out
+/// without a leading `:`, which [`Out::to_wire`] writes only where the
+/// value is empty, holds a space or starts with a colon: a trailing
+/// parameter is optional when it needs no delimiter, Modern's own ergo
+/// example writes 314 that way, and the WHOIS numerics beside this one
+/// already do.
+fn whowas_lines(server: &str, client: &str, asked: &str, was: Option<&Was>) -> Vec<Out> {
+    let Some(was) = was else {
+        return vec![
+            Out::new(
+                server,
+                "406",
+                vec![
+                    client.to_owned(),
+                    asked.to_owned(),
+                    "There was no such nickname".to_owned(),
+                ],
+            ),
+            Out::new(
+                server,
+                "369",
+                vec![
+                    client.to_owned(),
+                    asked.to_owned(),
+                    "End of WHOWAS".to_owned(),
+                ],
+            ),
+        ];
+    };
+    let who = &was.who;
+    vec![
+        Out::new(
+            server,
+            "314",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                who.user.clone(),
+                who.host.clone(),
+                "*".to_owned(),
+                who.uri.clone(),
+            ],
+        ),
+        Out::new(
+            server,
+            "312",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                server.to_owned(),
+                format!(
+                    "mimid-agent; this run has had this nick since {}",
+                    server_time(was.at)
+                ),
+            ],
+        ),
+        Out::new(
+            server,
+            "369",
+            vec![
+                client.to_owned(),
+                who.nick.clone(),
+                "End of WHOWAS".to_owned(),
+            ],
+        ),
+    ]
 }
 
 /// Whether CTCP `ctcp` (without its `\x01`s) is an ACTION.
@@ -196,6 +301,7 @@ impl Session {
             "LIST" => self.list(),
             "WHO" => self.who_cmd(line),
             "WHOIS" => self.whois(line),
+            "WHOWAS" => self.whowas(line),
             "ISON" => self.ison(line),
             "USERHOST" => self.userhost(line),
             "AWAY" => {
@@ -1075,6 +1181,49 @@ impl Session {
         self.numeric("318", &[&nick, "End of /WHOIS list"]);
     }
 
+    /// `WHOWAS <nick> [<count>]`: which MIMI user the nick stands for
+    /// and since when, class 1 of epic mimid-1wgh.140 (decision
+    /// mimid-1wgh.143; ~/PROJECT/IETF/specs/ircdocs-modern.html, "WHOWAS
+    /// message").
+    ///
+    /// Modern says WHOWAS "asks for information about a nickname which
+    /// no longer exists". No nick here ever stops existing: it is
+    /// derived from the user URI, given once and never released
+    /// ([`crate::names`]), so mimid answers for a nick that is still in
+    /// use, which is its own deviation from that sentence and the only
+    /// reading with anything true to say.
+    ///
+    /// `<count>` is accepted and not read. There is at most one entry
+    /// per nick, so the reply is one entry or none, which is what every
+    /// value of `<count>` asks for: a positive count is at least one,
+    /// and anything else is "a full search" (Modern "WHOWAS message";
+    /// RFC 2812 §3.6.3, "If a non-positive number is passed as being
+    /// `<count>`, then a full search is done"), which is that same one
+    /// entry. RFC 2812's `<target>` is not read either: there is no
+    /// other server to ask.
+    ///
+    /// Only one nick is read, Modern's `<nick>`, not RFC 2812's comma
+    /// list: `WHOWAS a,b` asks about the nick `a,b`, which is no nick,
+    /// and is answered 406.
+    fn whowas(&mut self, line: &Line) {
+        // Modern: "If the <nick> argument is missing, they SHOULD send a
+        // single reply, using either ERR_NONICKNAMEGIVEN (431) or
+        // ERR_NEEDMOREPARAMS (461)". 431 is what WHOIS above sends, and
+        // a single reply means no 369 after it.
+        let Some(nick) = whowas_nick(line).map(str::to_owned) else {
+            self.numeric("431", &["No nickname given"]);
+            return;
+        };
+        // The guard is gone before anything is written: nothing under it
+        // is needed to render, and a send must never hold it.
+        let was = self.shared.names().whowas(&nick);
+        let client = self.target();
+        let server = self.shared.server.clone();
+        for out in whowas_lines(&server, &client, &nick, was.as_ref()) {
+            self.send(&out);
+        }
+    }
+
     /// `METADATA <target> GET identity`, and a refusal for anything that
     /// would set one (bead mimid-i0id.11; meshIRCd's `handleMetadataGet`).
     ///
@@ -1405,6 +1554,104 @@ impl Session {
             Err(error) => {
                 self.server_notice(&format!("mimid: inviting {nick} to {channel}: {error}"))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::names::Identity;
+
+    fn was(at: u64) -> Was {
+        Was {
+            who: Identity {
+                uri: "mimi://example.com/u/someone".to_owned(),
+                nick: "someone".to_owned(),
+                user: "someone".to_owned(),
+                host: "example.com".to_owned(),
+            },
+            at,
+        }
+    }
+
+    /// Oracle: the Reply Examples of Modern's "WHOWAS message", whose
+    /// no-such-nick pair is taken byte for byte with the server name
+    /// substituted, and the parameters of `RPL_WHOWASUSER (314)`,
+    /// `RPL_WHOISSERVER (312)`, `RPL_ENDOFWHOWAS (369)` and
+    /// `ERR_WASNOSUCHNICK (406)`
+    /// (~/PROJECT/IETF/specs/ircdocs-modern.html,
+    /// ~/PROJECT/IETF/specs/ircdocs-modern-numerics.yml).
+    ///
+    /// 314's and 312's last parameters carry no `:`, which the examples
+    /// show both ways (inspircd writes `:Realname`, ergo `Realname`):
+    /// the delimiter is optional where the value needs none, and
+    /// `Out::to_wire` writes it only where it does. The time is the
+    /// fixture's own field, never the clock.
+    #[test]
+    fn whowas_lines_match_moderns_reply_examples() {
+        let found = whowas_lines("server.example", "val", "someone", Some(&was(1_500)));
+        let wire: Vec<String> = found.iter().map(|o| o.to_wire(false)).collect();
+        assert_eq!(
+            wire,
+            [
+                ":server.example 314 val someone someone example.com * mimi://example.com/u/someone\r\n",
+                ":server.example 312 val someone server.example :mimid-agent; this run has had this nick since 1970-01-01T00:00:01.500Z\r\n",
+                ":server.example 369 val someone :End of WHOWAS\r\n",
+            ]
+        );
+
+        let missing = whowas_lines("server.example", "val", "someone", None);
+        let wire: Vec<String> = missing.iter().map(|o| o.to_wire(false)).collect();
+        assert_eq!(
+            wire,
+            [
+                ":server.example 406 val someone :There was no such nickname\r\n",
+                ":server.example 369 val someone :End of WHOWAS\r\n",
+            ]
+        );
+    }
+
+    /// Oracle: Modern's "WHOWAS message" gives "Parameters: `<nick>
+    /// [<count>]`", so the nick is the first parameter. WHOIS beside it
+    /// reads `params.last()`, which would make `WHOWAS someone 2` ask
+    /// about the nick "2".
+    #[test]
+    fn whowas_reads_the_nick_from_its_first_parameter() {
+        for (line, nick) in [
+            ("WHOWAS someone", Some("someone")),
+            ("WHOWAS someone 2", Some("someone")),
+            ("WHOWAS someone 2 *.edu", Some("someone")),
+            ("WHOWAS :someone", Some("someone")),
+            ("WHOWAS Someone -1", Some("Someone")),
+            // One nick, not RFC 2812's list: this is a nick no run gave.
+            ("WHOWAS a,b", Some("a,b")),
+            ("WHOWAS", None),
+            ("WHOWAS :", None),
+        ] {
+            let parsed = crate::line::parse(line).expect("a verb and its parameters");
+            assert_eq!(whowas_nick(&parsed), nick, "{line}");
+        }
+    }
+
+    /// Oracle: Modern's `RPL_ENDOFWHOWAS (369)` marks the end of the
+    /// reply for the nickname `<nick>` and comes after every other
+    /// WHOWAS numeric. The found lines carry the nick as the daemon gave it;
+    /// 406 carries the spelling the client sent, which is all there is.
+    #[test]
+    fn every_whowas_reply_ends_369_and_names_one_nick() {
+        let found = whowas_lines("server.example", "val", "SOMEONE", Some(&was(0)));
+        let codes: Vec<&str> = found.iter().map(|o| o.command.as_str()).collect();
+        assert_eq!(codes, ["314", "312", "369"]);
+        for out in &found {
+            assert_eq!(out.params[1], "someone", "{}", out.to_wire(false));
+        }
+
+        let missing = whowas_lines("server.example", "val", "SOMEONE", None);
+        let codes: Vec<&str> = missing.iter().map(|o| o.command.as_str()).collect();
+        assert_eq!(codes, ["406", "369"]);
+        for out in &missing {
+            assert_eq!(out.params[1], "SOMEONE", "{}", out.to_wire(false));
         }
     }
 }

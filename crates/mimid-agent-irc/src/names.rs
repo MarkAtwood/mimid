@@ -23,6 +23,18 @@
 //!   arrives. A name is held by whichever comes first, a room or an
 //!   invite; the later one gets the collision suffix. An invite whose
 //!   Welcome could not be read is `&invite-<number>`.
+//! - **When a nick was given**: a nick is stamped with the time it was
+//!   given, which is what WHOWAS answers ([`Names::whowas`], decision
+//!   mimid-1wgh.143). Nothing here is ever taken back or moved to
+//!   another user while the daemon lives, so there is at most one entry
+//!   per nick and the stamp says "known here since", never when a nick's
+//!   second meaning began.
+//! - **Hosts in a numeric**: the URI's domain is shown with every
+//!   character outside `[A-Za-z0-9.-]` as `_`, so a `<host>` cannot
+//!   start with the `:` Modern forbids there, nor carry a space that
+//!   would split the parameter after it
+//!   (~/PROJECT/IETF/specs/ircdocs-modern.html, `RPL_WHOISUSER (311)`).
+//!   The user URI itself is shown as it is.
 //!
 //! # Limitations
 //!
@@ -36,6 +48,14 @@
 //! - The name held for a room whose invite was accepted is given up only
 //!   when the room arrives; if the room never does, the name stays held
 //!   until the daemon restarts.
+//! - The times WHOWAS answers with are in memory and die with the
+//!   daemon, and [`Names::load`] stamps a nick it reads back from a
+//!   record with the time of the load. The stamp therefore says when
+//!   this run first gave or read the nick, not when the user first saw
+//!   it, and the one case where a nick comes out as another user's — a
+//!   kept nick dropped at a restart, the first limitation above — cannot
+//!   be reported at all. Only a persisted history could (bead
+//!   mimid-1wgh.140.8).
 
 use std::collections::BTreeMap;
 
@@ -135,6 +155,32 @@ fn nick_part(text: &str) -> String {
         .collect()
 }
 
+/// `domain` with every character outside the DNS characters
+/// `[A-Za-z0-9.-]` as `_`: the `<host>` of a hostmask and of the
+/// numerics that carry one.
+///
+/// `mimi://<domain>/u/<local>` admits any non-empty domain
+/// ([`parse_user_uri`]) and a user URI reaches here from a peer and from
+/// the client's own line, so this is where the constraint on `<host>` is
+/// met: Modern says `<host>` "CANNOT start with a colon (':', 0x3A) as
+/// this would get parsed as a trailing parameter"
+/// (~/PROJECT/IETF/specs/ircdocs-modern.html, `RPL_WHOISUSER (311)`,
+/// which `RPL_WHOWASUSER (314)` takes the meaning of each argument
+/// from), and the message format would make a space in it two
+/// parameters. `_` is what [`nick_part`] already does for the same job.
+fn host_part(domain: &str) -> String {
+    domain
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// Whether `nick` is one this module could have made.
 fn is_nick(nick: &str) -> bool {
     !nick.is_empty()
@@ -183,7 +229,18 @@ fn base_identity(uri: &str) -> (String, String, String) {
     if nick.starts_with(|c: char| c.is_ascii_digit() || c == '-') {
         nick.insert(0, '_');
     }
-    (nick, nick_part(local), domain.to_owned())
+    (nick, nick_part(local), host_part(domain))
+}
+
+/// How IRC shows `uri` under the nick it already has.
+fn identity_with_nick(uri: &str, nick: String) -> Identity {
+    let (_, user, host) = base_identity(uri);
+    Identity {
+        uri: uri.to_owned(),
+        nick,
+        user,
+        host,
+    }
 }
 
 /// The nicks and channel names of one store, for every IRC connection.
@@ -194,6 +251,11 @@ pub struct Names {
     nicks: BTreeMap<String, String>,
     /// Folded nick to user URI; the service nick maps to "".
     users: BTreeMap<String, String>,
+    /// Folded nick to the time it was given, in milliseconds since the
+    /// epoch: what WHOWAS answers ([`Names::whowas`]). Written only in
+    /// [`Names::take_nick`], beside the mapping itself, so the two
+    /// cannot drift apart (decision mimid-1wgh.143).
+    when: BTreeMap<String, u64>,
     /// Room key to channel name, for the rooms shown.
     channels: BTreeMap<Key, String>,
     /// Folded channel name to room key.
@@ -223,6 +285,17 @@ struct Hold {
     room: String,
     /// Whether the user accepted the invite: the room is being joined.
     accepted: bool,
+}
+
+/// What a nick stood for and since when: one WHOWAS entry
+/// ([`Names::whowas`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Was {
+    /// How IRC shows the user the nick was given to. The same
+    /// [`Identity`] WHOIS shows, so 314 and 311 cannot disagree.
+    pub who: Identity,
+    /// When this run gave the nick, in milliseconds since the epoch.
+    pub at: u64,
 }
 
 /// What a held channel name stands for ([`Names::held`]).
@@ -257,13 +330,24 @@ impl Names {
             rooms: BTreeMap::new(),
             invites: BTreeMap::new(),
             held: BTreeMap::new(),
+            when: BTreeMap::new(),
         };
+        // The service nick is reserved here and not through take_nick:
+        // it stands for no user, so WHOWAS of it is 406 and the service
+        // is never shown as a MIMI user (decision mimid-1wgh.143).
         names.users.insert(SERVICE_NICK.to_owned(), String::new());
         names.take_nick(own_uri, nick);
         names
     }
 
+    /// Binds `nick` to `uri`: the one place a nick is ever given, and so
+    /// the one place the time it was given is recorded. Nothing ever
+    /// unbinds one, which is why there is at most one [`Was`] per nick,
+    /// and why `<count>` and Modern's newest-first order are satisfied
+    /// with nothing to sort (decision mimid-1wgh.143). A persisted
+    /// history would make both bite (bead mimid-1wgh.140.8).
     fn take_nick(&mut self, uri: &str, nick: String) {
+        self.when.insert(fold(&nick), crate::render::now_ms());
         self.users.insert(fold(&nick), uri.to_owned());
         self.nicks.insert(uri.to_owned(), nick);
     }
@@ -330,13 +414,7 @@ impl Names {
     /// How IRC shows `uri`.
     pub fn identity(&mut self, uri: &str) -> Identity {
         let nick = self.nick(uri);
-        let (_, user, host) = base_identity(uri);
-        Identity {
-            uri: uri.to_owned(),
-            nick,
-            user,
-            host,
-        }
+        identity_with_nick(uri, nick)
     }
 
     /// The user URI of `nick`, if it is one given here; `Some("")` for the
@@ -344,6 +422,30 @@ impl Names {
     #[must_use]
     pub fn user_of(&self, nick: &str) -> Option<&str> {
         self.users.get(&fold(nick)).map(String::as_str)
+    }
+
+    /// What `nick` stands for and since when, if this run has given it:
+    /// the one entry WHOWAS answers with (decision mimid-1wgh.143).
+    ///
+    /// `None` for anything else, including the service nick, a user URI
+    /// and a comma-separated list, each of which is a nick this run has
+    /// not given. Nothing is given a nick here: a nick WHOWAS does not
+    /// know stays unknown.
+    ///
+    /// Nicks are compared folded, which is `CASEMAPPING=ascii` (the 005
+    /// token this front end sends) applied to Modern's "looking for any
+    /// nicks which are lexically the same (no wild card matching here)"
+    /// (~/PROJECT/IETF/specs/ircdocs-modern.html, "WHOWAS message").
+    #[must_use]
+    pub fn whowas(&self, nick: &str) -> Option<Was> {
+        let folded = fold(nick);
+        let at = *self.when.get(&folded)?;
+        let uri = self.users.get(&folded)?;
+        let given = self.nicks.get(uri)?.clone();
+        Some(Was {
+            who: identity_with_nick(uri, given),
+            at,
+        })
     }
 
     /// Every nick given, with its URI ("" for the service).
@@ -923,5 +1025,107 @@ mod tests {
         for bad in ["#", "a", "#a b", "#a,b", "&x", "#é", "#a:b"] {
             assert!(!is_channel_name(bad), "{bad}");
         }
+    }
+
+    /// Oracle: Modern "WHOWAS message" — the server "searches through its
+    /// nickname history, looking for any nicks which are lexically the
+    /// same (no wild card matching here)", under `CASEMAPPING=ascii`.
+    /// Every nick given is in it, with the hostmask parts WHOIS 311
+    /// shows; nothing else is, the service nick included (decision
+    /// mimid-1wgh.143).
+    #[test]
+    fn a_nick_given_is_what_whowas_answers() {
+        let before = crate::render::now_ms();
+        let mut names = Names::new(ME);
+        let bob = names.nick("mimi://b.example/u/bob");
+        let after = crate::render::now_ms();
+        assert_eq!(bob, "bob-b");
+
+        let was = names.whowas(&bob).expect("bob's nick was given");
+        assert_eq!(was.who.nick, bob);
+        assert_eq!(was.who.uri, "mimi://b.example/u/bob");
+        assert_eq!(was.who.user, "bob");
+        assert_eq!(was.who.host, "b.example");
+        assert!(
+            (before..=after).contains(&was.at),
+            "{} is not within {before}..={after}",
+            was.at
+        );
+        // The hostmask parts are the ones WHOIS shows for the same user.
+        assert_eq!(was.who, names.identity("mimi://b.example/u/bob"));
+
+        // The user's own nick is answered for, and only ASCII case is
+        // folded away.
+        assert_eq!(
+            names.whowas("alice-a").map(|w| w.who.uri).as_deref(),
+            Some(ME)
+        );
+        assert_eq!(
+            names.whowas("ALICE-A").map(|w| w.who.nick).as_deref(),
+            Some("alice-a")
+        );
+        assert_eq!(
+            names.whowas("BOB-B").map(|w| w.who.nick).as_deref(),
+            Some("bob-b")
+        );
+
+        // Nothing else is a nick this run gave.
+        for not in [
+            SERVICE_NICK,
+            "MIMID",
+            "mimi://b.example/u/bob",
+            "bob-b,alice-a",
+            "nobody-x",
+            "",
+            "zoë-b",
+        ] {
+            assert_eq!(names.whowas(not), None, "{not}");
+        }
+    }
+
+    /// Oracle: §4 "Names": a nick is never moved to another user. Two
+    /// users wanting the same base nick must not make WHOWAS of that
+    /// nick name the one who did not get it, which is the impersonation
+    /// bead mimid-1wgh.140.3 names.
+    #[test]
+    fn whowas_names_the_user_who_holds_the_nick() {
+        let mut names = Names::new(ME);
+        // alice on a.example.org wants alice-a, which the user holds.
+        let shadow = names.nick("mimi://a.example.org/u/alice");
+        assert_ne!(shadow, "alice-a");
+        assert_eq!(
+            names.whowas("alice-a").map(|w| w.who.uri).as_deref(),
+            Some(ME)
+        );
+        assert_eq!(
+            names.whowas(&shadow).map(|w| w.who.uri).as_deref(),
+            Some("mimi://a.example.org/u/alice")
+        );
+    }
+
+    /// Oracle: Modern `RPL_WHOISUSER (311)`, whose argument meanings
+    /// `RPL_WHOWASUSER (314)` takes: `<host>` "CANNOT start with a colon
+    /// (':', 0x3A) as this would get parsed as a trailing parameter".
+    /// `Session::who` takes any `mimi://<domain>/u/<local>` from the
+    /// client's own line, and a peer names users by URI too, so the
+    /// authority reaches the numerics and must not be able to split or
+    /// end a line.
+    #[test]
+    fn a_hostile_authority_cannot_split_a_numeric() {
+        let mut names = Names::new(ME);
+        for (uri, host) in [
+            ("mimi://:1/u/bob", "_1"),
+            ("mimi://a b/u/bob", "a_b"),
+            ("mimi://a\rb\nc\0d/u/bob", "a_b_c_d"),
+            ("mimi://zoë/u/bob", "zo_"),
+            ("mimi://a.example/u/bob", "a.example"),
+        ] {
+            let id = names.identity(uri);
+            assert_eq!(id.host, host, "{uri}");
+            let was = names.whowas(&id.nick).expect("the nick was just given");
+            assert_eq!(was.who.host, host, "{uri}");
+        }
+        let own = Names::new("mimi:// :/u/alice");
+        assert_eq!(own.own().host, "__");
     }
 }

@@ -143,6 +143,19 @@
 //!   bounded by nothing but the listener.
 //! - `JOIN 0` leaves every room for good, as IRC defines it (§7.12): each
 //!   is a `PART` (§7.1), and only a new invite brings the user back.
+//! - `WHOWAS` reaches only this daemon run, and only forwards: it says
+//!   which MIMI user a nick stands for and since when this run has had
+//!   it, never which user it used to stand for. A nick here is derived
+//!   from the user URI and is never released or moved while the daemon
+//!   lives, so within a run there is nothing else to say; across a
+//!   restart a kept nick can come out as another user's, and that is the
+//!   one case WHOWAS was asked for and cannot answer, because the times
+//!   die with the process (decision mimid-1wgh.143, bead
+//!   mimid-1wgh.140.8). Modern calls the verb one about "a nickname which
+//!   no longer exists"; mimid answers for nicks in use, since none ever
+//!   stops existing. `<count>` is accepted and not read: there is at most
+//!   one entry per nick. The `mimid` service nick is 406: it stands for
+//!   no user.
 //! - A connection waits while the store's sync holds the agent, PING
 //!   included: a PONG is written only once the agent is free, so it says
 //!   the user's next message could have been taken rather than that the

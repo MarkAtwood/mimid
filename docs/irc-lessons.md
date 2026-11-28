@@ -229,6 +229,11 @@ read for what it sends and expects. Details are in agent-frontends.md
     `MODE #c b` on every join and reports the channel synced only once
     324, 315 and 368 have come (checked 2026-11-21).
   - WHOIS always ends with 318, including 401 then 318 for an unknown nick.
+  - WHOWAS always ends with 369, including 406 then 369 for a nick the
+    server has no entry for; Modern makes that pair a MUST. A WHOWAS with
+    no nick at all is a single reply and gets no 369 after it. Its nick is
+    the *first* parameter, not the last as in WHOIS: `WHOWAS someone 2`
+    asks about `someone` (decision mimid-1wgh.143).
 - **Also implement:** NAMES, PART, QUIT (`ERROR :Closing Link` before
   closing), TOPIC, AWAY (305, 306 and 301), and ISON or USERHOST.
 - **Everything else:** 421 answers a verb the server does not know, which
