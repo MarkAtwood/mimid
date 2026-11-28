@@ -35,19 +35,48 @@ use mimid_agent_store::credentials::Login;
 /// and `extended-monitor`, which adds only AWAY, ACCOUNT, CHGHOST and
 /// SETNAME notifications for monitored nicks, none of which this front
 /// end has.
-pub const CAPS: [&str; 12] = [
+///
+/// The three of bead mimid-1wgh.140.6, with the file each came from:
+/// `account-tag` (~/PROJECT/IETF/specs/ircv3-account-tag.md) and
+/// `extended-join` (ircv3-extended-join.md), which carry the MIMI user
+/// URI a nick stands for, the same string 311 `RPL_WHOISUSER` and 330
+/// `RPL_WHOISACCOUNT` already send; and `standard-replies`
+/// (ircv3-standard-replies.md), the `FAIL`, `WARN` and `NOTE` format
+/// this front end already writes for `CHATHISTORY`, `METADATA`,
+/// `REDACT`, `MONITOR` and `ACCOUNT_REQUIRED`.
+///
+/// `standard-replies` carries a RECOMMENDED this front end does not
+/// follow: that a server "use standard replies instead of
+/// vendor-specific error numerics or server notices for
+/// non-standardised features" when answering a client that supports it
+/// (ircv3-standard-replies.md, "Capabilities"). The same document
+/// requires that implementers "MUST use an existing code if one is
+/// already defined", and the registry it names for that is a web page,
+/// not one of the files in ~/PROJECT/IETF/specs, so a code invented here
+/// for one of the remaining failure notices is unverifiable and may
+/// collide with a registered one later. Those notices stay notices until
+/// the registry is in hand.
+///
+/// `utf8only` is not a capability and so is not here:
+/// ircv3-utf8-only.md defines an ISUPPORT token, which [`isupport`]
+/// sends. What that document gives this front end is the `INVALID_UTF8`
+/// reply code (`Session::on_line`).
+pub const CAPS: [&str; 15] = [
+    "account-tag",
     "batch",
     "draft/chathistory",
     "draft/event-playback",
     "draft/message-redaction",
     "draft/read-marker",
     "echo-message",
+    "extended-join",
     "message-tags",
     "multi-prefix",
     "sasl",
     "server-time",
     "soju.im/account-required",
     "soju.im/webpush",
+    "standard-replies",
 ];
 
 /// The 005 tokens (docs/design/agent-frontends.md §4 "Capabilities in
@@ -264,6 +293,7 @@ impl Session {
             "LIST" => {
                 let mut on = Vec::new();
                 for (cap, enabled) in [
+                    ("account-tag", self.caps.account_tag),
                     ("batch", self.caps.batch),
                     ("draft/chathistory", self.caps.chathistory),
                     ("draft/event-playback", self.caps.event_playback),
@@ -271,10 +301,12 @@ impl Session {
                     ("draft/read-marker", self.caps.read_marker),
                     ("soju.im/webpush", self.caps.webpush),
                     ("echo-message", self.caps.echo_message),
+                    ("extended-join", self.caps.extended_join),
                     ("message-tags", self.caps.message_tags),
                     ("multi-prefix", self.caps.multi_prefix),
                     ("sasl", self.caps.sasl),
                     ("server-time", self.caps.server_time),
+                    ("standard-replies", self.caps.standard_replies),
                 ] {
                     if enabled {
                         on.push(cap);
@@ -311,6 +343,12 @@ impl Session {
                         "soju.im/account-required" => {}
                         "message-tags" => caps.message_tags = on,
                         "server-time" => caps.server_time = on,
+                        // The `account` tag goes to this client whether
+                        // or not it also asked for message-tags
+                        // ([`crate::conn::Caps::takes_tag`]).
+                        "account-tag" => caps.account_tag = on,
+                        "extended-join" => caps.extended_join = on,
+                        "standard-replies" => caps.standard_replies = on,
                         _ => known = false,
                     }
                 }
@@ -440,11 +478,15 @@ impl Session {
         if let Some(asked) = self.client_nick.clone()
             && asked != me.nick
         {
-            let out = Out::new(
+            let mut out = Out::new(
                 &format!("{asked}!{}@{}", me.user, me.host),
                 "NICK",
                 vec![me.nick.clone()],
             );
+            // The user's own command, so it carries the user's
+            // `account` (`crate::render::account_tag`).
+            out.tags
+                .extend(crate::render::account_tag(&me, self.caps.account_tag));
             self.send(&out);
         }
         self.numeric(
@@ -496,6 +538,104 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Oracles: the capability name each of
+    /// ~/PROJECT/IETF/specs/ircv3-*.md gives at "capability negotiation
+    /// time", written out by hand; docs/irc-lessons.md "CAP", that a
+    /// capability advertised and not honoured is worse than one absent.
+    ///
+    /// The list is the whole offer, in the order a reviewer lines it up
+    /// against those files, and the names that must stay out of it are
+    /// named here too (bead mimid-1wgh.140.6): re-offering one takes
+    /// changing this test, which takes an argument.
+    #[test]
+    fn the_cap_list_holds_only_what_is_wired_up() {
+        assert_eq!(
+            CAPS,
+            [
+                "account-tag",
+                "batch",
+                "draft/chathistory",
+                "draft/event-playback",
+                "draft/message-redaction",
+                "draft/read-marker",
+                "echo-message",
+                "extended-join",
+                "message-tags",
+                "multi-prefix",
+                "sasl",
+                "server-time",
+                "soju.im/account-required",
+                "soju.im/webpush",
+                "standard-replies",
+            ]
+        );
+        let mut sorted = CAPS;
+        sorted.sort_unstable();
+        assert_eq!(CAPS, sorted);
+        for out in [
+            // No away state exists to propagate: AWAY answers 305 and
+            // 306 and stores nothing, and WHO's flags are always `H`.
+            "away-notify",
+            // A nick's account is its user URI and is never moved to
+            // another person, so ACCOUNT can never be sent.
+            "account-notify",
+            // A third party's invite is invisible: a member added by
+            // someone else is indistinguishable from one who joined.
+            "invite-notify",
+            // The user and host are the URI's local part and domain;
+            // neither changes.
+            "chghost",
+            // The answers a label would ride on come back from the
+            // change feed, not from the dispatch of the command
+            // (docs/irc-lessons.md "labeled-response").
+            "labeled-response",
+            // An ISUPPORT token, not a capability
+            // (ircv3-utf8-only.md); `isupport` sends it.
+            "utf8only",
+            // Both would promise a command this front end refuses.
+            "setname",
+            "extended-monitor",
+        ] {
+            assert!(!CAPS.contains(&out), "{out}");
+        }
+    }
+
+    /// Oracle: ~/PROJECT/IETF/specs/ircv3-message-tags.md,
+    /// "Capabilities": `account-tag`, `server-time` and `batch`
+    /// "implicitly depend on the tag format", and a client negotiating
+    /// one "MUST support the full tag format"; the same section says an
+    /// implementation "SHOULD NOT assume support for all tags when an
+    /// individual tag capability is negotiated".
+    ///
+    /// HexChat negotiates `account-tag` and `server-time` and not
+    /// `message-tags` (docs/design/client-survey.md §2), so a gate on
+    /// `message-tags` alone would drop the tag of a capability that
+    /// client asked for.
+    #[test]
+    fn a_tag_capability_carries_its_own_tag_without_message_tags() {
+        let caps = crate::conn::Caps {
+            account_tag: true,
+            server_time: true,
+            ..crate::conn::Caps::default()
+        };
+        assert!(caps.takes_tag("account"));
+        assert!(caps.takes_tag("time"));
+        assert!(!caps.takes_tag("batch"));
+        assert!(!caps.takes_tag("msgid"));
+        assert!(!caps.takes_tag("+draft/reply"));
+        let tags = crate::conn::Caps {
+            message_tags: true,
+            ..crate::conn::Caps::default()
+        };
+        for key in ["account", "time", "batch", "msgid", "+draft/reply"] {
+            assert!(tags.takes_tag(key), "{key}");
+        }
+        let none = crate::conn::Caps::default();
+        for key in ["account", "time", "batch", "msgid"] {
+            assert!(!none.takes_tag(key), "{key}");
+        }
+    }
 
     /// Oracle: IRCv3 Capability Negotiation, "CAP LS": with 302, every
     /// line but the last carries `*`; without it, one line.

@@ -110,10 +110,21 @@ read for what it sends and expects. Details are in agent-frontends.md
   query, so it sends `MONITOR +` too and will show an indicator and call
   it online. The honest answer to "no presence in MIMI" turned out to be
   a different question, not no answer.
+- **`extended-join` and `account-tag` are answered**
+  (agent-frontends.md §7.40): both carry which MIMI user a nick stands
+  for, the user URI that WHOIS already reports. A client that negotiates
+  `account-tag` gets the `account` tag whether or not it also asked for
+  `message-tags` -- the tag capability depends on the tag format by
+  itself, and HexChat asks for the one without the other. With them goes
+  `standard-replies`, which the front end's `FAIL` lines were already
+  relying on the client to take.
 - **Still skipped:** `labeled-response` (the lesson below stands; Goguma
   does not need it), `away-notify` (no presence in MIMI, and nothing to
   notify of), `soju.im/bouncer-networks`, `draft/metadata-2`,
-  `soju.im/FILEHOST`. `setname` and `extended-monitor` are not skipped
+  `soju.im/FILEHOST`. `account-notify`, `invite-notify` and `chghost`
+  are skipped for good: an account that never moves, an invite with no
+  visible inviter and a host that cannot change leave each of them with
+  nothing to send. `setname` and `extended-monitor` are not skipped
   but refused: see "Advertise only caps that are wired up" below, and
   §7.39 for the verb.
 - **Registration as Goguma does it:** everything pipelined, one `CAP REQ`
@@ -141,6 +152,9 @@ read for what it sends and expects. Details are in agent-frontends.md
     command, so the cap stays off the list for good (agent-frontends.md
     §7.39). `extended-monitor` stays off for the same kind of reason: it
     adds notifications for four caps this front end does not have.
+    Three of the five meshIRCd got wrong have no line to send here
+    either: account-notify, chghost and invite-notify
+    (agent-frontends.md §7.40 gives each one's reason).
 - **NICK and the burst:**
   - Accept the client's NICK, then make the real nick the target of 001,
     with a NICK change if needed. Never answer NICK with 462 (tailircd);

@@ -613,8 +613,21 @@ async fn goguma_catches_up_after_a_reconnect() {
         "message-tags",
         "server-time",
         "sasl",
+        // Goguma asks for these two in its own CAP REQ lines, so its
+        // request list is the test of the answer (§7.40).
+        "extended-join",
+        "account-tag",
     ] {
         assert!(acked.iter().any(|c| c == cap), "{cap} in {acked:?}");
+    }
+    let naked: Vec<String> = burst
+        .iter()
+        .filter(|m| m.command == "CAP" && m.params[1] == "NAK")
+        .map(|m| m.text().to_owned())
+        .collect();
+    for cap in ["away-notify", "labeled-response", "setname"] {
+        assert!(naked.iter().any(|c| c == cap), "{cap} in {naked:?}");
+        assert!(!acked.iter().any(|c| c == cap), "{cap} in {acked:?}");
     }
     assert!(burst.iter().any(|m| m.command == "903"), "{burst:#?}");
     let to = "timestamp=2100-01-01T00:00:00.000Z";
@@ -1109,4 +1122,236 @@ async fn call_without_a_url_says_irc_cannot_host_one() {
     );
 
     alice.stop().await;
+}
+
+/// The caps a client with the three of bead mimid-1wgh.140.6 asks for.
+const TAGGED_CAPS: [&str; 6] = [
+    "message-tags",
+    "server-time",
+    "echo-message",
+    "extended-join",
+    "account-tag",
+    "standard-replies",
+];
+
+/// Oracles: ~/PROJECT/IETF/specs/ircv3-extended-join.md, "The JOIN
+/// message is one of the following", written out by hand;
+/// ircv3-account-tag.md, "The tag MUST be added by the ircd to all
+/// commands sent by a user"; ircv3-message-tags.md "Capabilities", that
+/// `account-tag` depends on the tag format by itself, so a client that
+/// did not also ask for `message-tags` still gets the tag (HexChat's
+/// shape, docs/design/client-survey.md §2).
+///
+/// The account is the user URI (§7.15), the string 311 `RPL_WHOISUSER`
+/// and 330 `RPL_WHOISACCOUNT` already carry, and it is read from the
+/// connection that asked: three connections of one user, asking for
+/// different sets, see the same two JOINs differently.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn extended_join_and_account_tag_carry_the_user_uri() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    // Three of alice's connections: everything, nothing of the three,
+    // and account-tag without message-tags.
+    let mut both = register(&alice, &TAGGED_CAPS).await;
+    let mut plain = register(&alice, &CAPS).await;
+    let mut hexchat = register(&alice, &["server-time", "account-tag"]).await;
+    let mut b = register(&bob, &CAPS).await;
+
+    both.send("JOIN #r").await;
+    for irc in [&mut both, &mut plain, &mut hexchat] {
+        let join = irc
+            .until("alice's own JOIN", |m| {
+                m.command == "JOIN" && m.source == ALICE_MASK
+            })
+            .await;
+        irc.until_command("366").await;
+        assert_eq!(join.params[0], "#r", "{}", join.raw);
+        irc.seen.push(join);
+    }
+    let own: Vec<Msg> = [&both, &plain, &hexchat]
+        .iter()
+        .map(|irc| irc.seen.last().unwrap().clone())
+        .collect();
+    assert_eq!(own[0].params, ["#r", ALICE, ALICE], "{}", own[0].raw);
+    assert_eq!(own[0].tags["account"], ALICE, "{}", own[0].raw);
+    assert_eq!(own[1].params, ["#r"], "{}", own[1].raw);
+    assert!(!own[1].tags.contains_key("account"), "{}", own[1].raw);
+    assert_eq!(own[2].params, ["#r"], "{}", own[2].raw);
+    assert_eq!(own[2].tags["account"], ALICE, "{}", own[2].raw);
+
+    // bob is invited and joins: the same JOIN, from another user.
+    both.send(&format!("INVITE {BOB} #r")).await;
+    b.until("bob's own JOIN", |m| {
+        m.command == "JOIN" && m.source == BOB_MASK
+    })
+    .await;
+    b.until_command("366").await;
+    for irc in [&mut both, &mut plain, &mut hexchat] {
+        let join = irc
+            .until("bob's JOIN", |m| {
+                m.command == "JOIN" && m.source == BOB_MASK
+            })
+            .await;
+        irc.seen.push(join);
+    }
+    let his: Vec<Msg> = [&both, &plain, &hexchat]
+        .iter()
+        .map(|irc| irc.seen.last().unwrap().clone())
+        .collect();
+    assert_eq!(his[0].params, ["#r", BOB, BOB], "{}", his[0].raw);
+    assert_eq!(his[0].tags["account"], BOB, "{}", his[0].raw);
+    assert_eq!(his[1].params, ["#r"], "{}", his[1].raw);
+    assert!(!his[1].tags.contains_key("account"), "{}", his[1].raw);
+    assert_eq!(his[2].tags["account"], BOB, "{}", his[2].raw);
+
+    // A message from bob, long enough to be split: every line of it
+    // carries the sender's account, not only the first. It must still
+    // fit one line from bob, who gets 417 for a longer one.
+    let long = "x".repeat(450);
+    b.send(&format!("PRIVMSG #r :{long}")).await;
+    let mut pieces = Vec::new();
+    while pieces.iter().map(|m: &Msg| m.text().len()).sum::<usize>() < long.len() {
+        pieces.push(privmsg_from(&mut both, BOB_MASK).await);
+    }
+    assert!(pieces.len() > 1, "{pieces:#?}");
+    for piece in &pieces {
+        assert_eq!(piece.tags["account"], BOB, "{}", piece.raw);
+    }
+    let got = privmsg_from(&mut hexchat, BOB_MASK).await;
+    assert_eq!(got.tags["account"], BOB, "{}", got.raw);
+    let got = privmsg_from(&mut plain, BOB_MASK).await;
+    assert!(!got.tags.contains_key("account"), "{}", got.raw);
+
+    // alice's own line, echoed to the connection that sent it.
+    both.send("PRIVMSG #r :mine").await;
+    let echo = privmsg_from(&mut both, ALICE_MASK).await;
+    assert_eq!(echo.params, ["#r", "mine"], "{}", echo.raw);
+    assert_eq!(echo.tags["account"], ALICE, "{}", echo.raw);
+
+    alice.stop().await;
+    bob.stop().await;
+}
+
+/// Oracle: docs/irc-lessons.md "CAP", that a capability advertised and
+/// not honoured is worse than one absent (meshIRCd offers
+/// `account-notify`, `chghost`, `invite-notify`, `setname` and
+/// `labeled-response` and sends none of them), and the close reason of
+/// bead mimid-1wgh.140.6 for why each of these cannot be honoured here.
+///
+/// `utf8only` is in the list because it is not a capability at all:
+/// ircv3-utf8-only.md defines an ISUPPORT token, which the burst sends.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_caps_mimid_cannot_honour_are_naked() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let offered = ["account-tag", "extended-join", "standard-replies"];
+    let (mut irc, burst) = Irc::register(
+        alice.irc.unwrap(),
+        alice.token().trim(),
+        "someone",
+        &offered,
+    )
+    .await;
+
+    let ls: Vec<String> = burst
+        .iter()
+        .filter(|m| m.command == "CAP" && m.params[1] == "LS")
+        .map(|m| m.text().to_owned())
+        .collect();
+    assert!(!ls.is_empty(), "{burst:#?}");
+    let listed: Vec<&str> = ls.iter().flat_map(|l| l.split(' ')).collect();
+    for cap in offered {
+        assert!(listed.contains(&cap), "{cap} in {listed:?}");
+    }
+    const NAKED: [&str; 8] = [
+        "away-notify",
+        "account-notify",
+        "invite-notify",
+        "chghost",
+        "labeled-response",
+        "utf8only",
+        "setname",
+        "extended-monitor",
+    ];
+    for cap in NAKED {
+        assert!(!listed.contains(&cap), "{cap} in {listed:?}");
+    }
+    // Each on its own line, as Goguma asks: every one is refused.
+    for cap in NAKED {
+        irc.send(&format!("CAP REQ {cap}")).await;
+        let answer = irc.until_command("CAP").await;
+        assert_eq!(
+            (answer.params[1].as_str(), answer.text()),
+            ("NAK", cap),
+            "{}",
+            answer.raw
+        );
+    }
+    // What was acknowledged at registration is what CAP LIST holds:
+    // `soju.im/account-required` is not asked for here, since a REQ of
+    // it is acknowledged and turns nothing on.
+    irc.send("CAP LIST").await;
+    let answer = irc.until_command("CAP").await;
+    assert_eq!(answer.params[1], "LIST", "{}", answer.raw);
+    let mut on: Vec<&str> = answer.text().split(' ').collect();
+    on.sort_unstable();
+    assert_eq!(on, offered, "{}", answer.raw);
+
+    alice.stop().await;
+}
+
+/// Oracles: ~/PROJECT/IETF/specs/ircv3-utf8-only.md, the `INVALID_UTF8`
+/// code and that a server publishing `UTF8ONLY` "MUST NOT relay content
+/// ... containing non-UTF-8 data"; ircv3-standard-replies.md, "Message
+/// Format": `FAIL <command> <code> [<context>...] <description>`, with
+/// `*` as the command where "the client's message could not be parsed".
+///
+/// The NOTICE stays for a client without `standard-replies`, which has
+/// no contract to show a FAIL it does not recognise.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_line_that_is_not_utf8_fails_with_invalid_utf8() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = server(dir.path(), &[ALICE, BOB]).await;
+    let alice = Running::start(&with_irc(config(&server, ALICE, dir.path(), "any"))).await;
+    let bob = Running::start(&with_irc(config(&server, BOB, dir.path(), "any"))).await;
+    let mut a = register(&alice, &TAGGED_CAPS).await;
+    let mut old = register(&alice, &CAPS).await;
+    let mut b = register(&bob, &CAPS).await;
+    a.send("JOIN #r").await;
+    a.until_command("366").await;
+    a.send(&format!("INVITE {BOB} #r")).await;
+    b.until("bob's own JOIN", |m| {
+        m.command == "JOIN" && m.source == BOB_MASK
+    })
+    .await;
+    b.until_command("366").await;
+
+    a.send_raw(b"PRIVMSG #r :\xff\xfe\r\n").await;
+    let fail = a.until_command("FAIL").await;
+    assert_eq!(fail.params.len(), 3, "{}", fail.raw);
+    assert_eq!(fail.params[0], "*", "{}", fail.raw);
+    assert_eq!(fail.params[1], "INVALID_UTF8", "{}", fail.raw);
+    assert!(!fail.text().is_empty(), "{}", fail.raw);
+
+    // Nothing of that line reached bob: the next line he is relayed is
+    // the valid one sent after it.
+    a.send("PRIVMSG #r :after").await;
+    let got = privmsg_from(&mut b, ALICE_MASK).await;
+    assert_eq!(got.params, ["#r", "after"], "{}", got.raw);
+
+    // The same bytes to a client without standard-replies.
+    old.send_raw(b"PRIVMSG #r :\xff\xfe\r\n").await;
+    let notice = old.until_command("NOTICE").await;
+    assert!(notice.text().contains("UTF8ONLY"), "{}", notice.raw);
+    assert!(
+        !old.seen.iter().any(|m| m.command == "FAIL"),
+        "{:#?}",
+        old.seen
+    );
+
+    alice.stop().await;
+    bob.stop().await;
 }

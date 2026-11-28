@@ -416,7 +416,7 @@ impl Session {
             code,
             vec![self.target(), String::new()],
         );
-        let room = probe.room_for_trailing(self.caps.message_tags);
+        let room = self.room_for(&probe);
         for list in pack(items, room, ',') {
             self.numeric(code, &[&list]);
         }
@@ -445,7 +445,7 @@ impl Session {
             "734",
             vec![self.target(), limit.clone(), String::new(), FULL.to_owned()],
         );
-        let room = MAX_LINE.saturating_sub(probe.to_wire(self.caps.message_tags).len());
+        let room = MAX_LINE.saturating_sub(self.wire_len(&probe));
         for group in pack(rejected, room, ',') {
             self.numeric("734", &[&limit, &group, FULL]);
         }

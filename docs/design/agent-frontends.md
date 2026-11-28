@@ -1129,13 +1129,17 @@ command (§7.39). The same goes for `extended-monitor`, which adds
 notifications for four capabilities this front end does not have. (IRC v2 adds `sasl`, `batch`,
 `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
 `draft/message-redaction`, `multi-prefix` and `soju.im/webpush`: §7.25,
-§7.33 to §7.36.)
+§7.33 to §7.36; then `account-tag`, `extended-join` and
+`standard-replies`, with `account-notify`, `invite-notify`, `chghost`,
+`away-notify` and `labeled-response` moving from "needs work" to cannot
+be honoured at all, each for a reason in §7.40.)
 
 ISUPPORT (005): `CASEMAPPING=ascii`, `CHANTYPES=#&`, `PREFIX=(o)@`,
 `CHANMODES=b,,,nt`, `NICKLEN=30`, `CHANNELLEN=64`, `TARGMAX=PRIVMSG:1,NOTICE:1,JOIN:,PART:,KICK:1,WHOIS:1`,
 `LINELEN=512`, `UTF8ONLY`, `NETWORK=mimid`. Invalid UTF-8 from the client
-is refused with a NOTICE saying the line was not sent. This is the v1
-list and not what the front end sends today, which also carries
+is refused with a NOTICE saying the line was not sent; a client with
+`standard-replies` gets `FAIL * INVALID_UTF8` instead (§7.40). This is
+the v1 list and not what the front end sends today, which also carries
 `CHATHISTORY`, `MSGREFTYPES`, `CLIENTTAGDENY`, `draft/ACCOUNTREQUIRED`
 and `MONITOR=100`; `TARGMAX` gained `MONITOR:` with the verb (§7.39).
 
@@ -2443,10 +2447,13 @@ Added on 2026-11-20:
       says to offer it only when every reply carries the label.
       `soju.im/bouncer-networks`: MIMI has one network
       (client-survey.md §2). `draft/metadata-2`, `soju.im/FILEHOST`,
-      `draft/pre-away`, `extended-join`,
+      `draft/pre-away`,
       `soju.im/no-implicit-names`: Goguma works without them (it keeps
       pins and mutes on the phone, has no upload, sends AWAY after
-      registration, fills member lists from NAMES). `setname` and
+      registration, fills member lists from NAMES). `extended-join` is
+      offered now, with `account-tag` and `standard-replies`: Goguma
+      asks for all three, and the first two carry which MIMI user a nick
+      stands for, which a nick alone does not say (§7.40). `setname` and
       `extended-monitor` are the two that must never be offered at all,
       and §7.39 says why. Goguma's WHO of a
       query's nick expects 0 or 1 replies (`client_controller.dart:287-312`),
@@ -2789,6 +2796,118 @@ Added on 2026-11-20:
       `a_person_record_counts_the_clients_in_a_shared_group`. Every
       absence is bounded by a following PING and its PONG, never by a
       clock.
+
+40. **The capabilities offered, and the five that cannot be (bead
+    mimid-1wgh.140.6).** A capability is not a verb, so none of the
+    three classes of §4 holds one; the test that decides a class is what
+    decides a capability. Class 1 asks whether the agent has the fact
+    the verb reports, and a capability is offered when the agent has the
+    fact the capability promises and can send every line the
+    specification requires of it. A capability advertised and not
+    honoured is worse than one absent, because a client then changes its
+    behaviour on a promise (docs/irc-lessons.md "CAP"; meshIRCd offers
+    five it never sends).
+    - **`extended-join`** (ircv3-extended-join.md): the JOIN becomes
+      `:nick!user@host JOIN #c <account> :<realname>`, both the user URI
+      -- the string 311 `RPL_WHOISUSER`, 330 `RPL_WHOISACCOUNT` and
+      352 `RPL_WHOREPLY` already carry (§7.15), so a client reading any
+      of the four gets one answer. Four lines carry it: the join burst,
+      a member arriving, the JOIN that answers an accepted one-to-one
+      invite, and the JOIN of `&invite-<n>`.
+    - **`account-tag`** (ircv3-account-tag.md): `@account=<uri>` on
+      every line whose source is a user's hostmask, which the
+      specification writes as "all commands sent by a user". Each
+      message line carries it and not only the first, because the tag is
+      part of what the text is measured against when a long message is
+      split. Not on a numeric: the specification's SHOULD for those was
+      "relaxed to SHOULD after it was found to be widely not
+      implemented" (its Errata), and every numeric here answers the
+      client's own command. Not on the MODE of a role change, which the
+      specification names among the commands that MUST carry it: the
+      store's participant record holds a user and a role and no actor,
+      so the line is the server's and there is no account to attach. Not
+      on the service's NOTICE, which stands for no MIMI user, and not on
+      a Web Push payload, which goes to a push service.
+    - **The tag is not gated on `message-tags`.** `account-tag`
+      "implicitly depend[s] on the tag format", and a client that
+      negotiates it "MUST support the full tag format"
+      (ircv3-message-tags.md "Capabilities"), so the tag goes to a
+      client that asked for `account-tag` alone -- HexChat's shape
+      (client-survey.md §2). The same section's "SHOULD NOT assume
+      support for all tags when an individual tag capability is
+      negotiated" is why that client gets `account` and `time` and not
+      `msgid` or `+draft/reply`. Server tags are written before
+      client-only ones, which that document makes a MUST and which
+      `Out::to_wire` now settles for every line.
+    - **`standard-replies`** (ircv3-standard-replies.md): the `FAIL`,
+      `WARN` and `NOTE` format this front end already writes for
+      `CHATHISTORY`, `METADATA`, `REDACT`, `MONITOR` and
+      `ACCOUNT_REQUIRED`. Advertising it says out loud what those
+      clients were already relied on to take. A line that is not UTF-8
+      is answered `FAIL * INVALID_UTF8` to a client with the
+      capability, the code ircv3-utf8-only.md defines, with `*` as the
+      command because the line could not be parsed; the NOTICE of §4
+      stays for every other client, which has no contract to show a FAIL
+      it does not recognise. The capability's RECOMMENDED replacement of
+      the remaining failure notices is not done: the same document
+      requires an existing registry code where one is defined, and that
+      registry is a web page and not a file in ~/PROJECT/IETF/specs, so
+      a code invented here would be unverifiable and could collide.
+    - **`utf8only` is not a capability**: ircv3-utf8-only.md defines an
+      ISUPPORT token, which 005 has sent since v1. What the document
+      gives this front end is the reply code above.
+    - **The five that cannot be honoured**, each on a fact in the code
+      and not on effort: `away-notify`, because no away state exists --
+      AWAY answers 305 and 306 and stores nothing, WHO's flags are
+      always `H` or `H@`, and §4 "Users" already says there is no 301
+      because MIMI carries no presence; `account-notify`, because the
+      account is the user URI and a nick is never moved to another
+      person, so `ACCOUNT` could never be sent; `invite-notify`, because
+      a third party's invite is invisible -- the participant record has
+      no inviter, so a remote member's add cannot be told from a join;
+      `chghost`, because the user and host are the URI's local part and
+      domain and neither changes; and `labeled-response`, because the
+      answers a label would ride on -- the echo of a PRIVMSG, the JOIN
+      of a JOIN, the TOPIC of a TOPIC -- come back later from the change
+      feed and not from the dispatch of the command, so the label would
+      have to be carried through the outbox and the feed
+      (docs/irc-lessons.md says to offer it only when every reply
+      carries the label). `setname` and `extended-monitor` stay out for
+      the reason §7.39 gives.
+    - **A hostile user URI.** A URI reaches this front end from a peer's
+      MLS credential and from the client's own line, and nothing between
+      the credential and the wire bounds it or keeps IRC's forbidden
+      characters out of it. The account parameter, the realname and the
+      tag are written only for a URI that is a user URI, is at most
+      `MAX_ACCOUNT` octets and can be written as a middle parameter;
+      otherwise the parameters are `*` and the tag is left off, which
+      are the two values the specifications define for a nick whose
+      account is not known (decision mimid-1wgh.150). The length limit
+      is what keeps the extended JOIN inside 512 octets, the tag
+      included, since nothing cuts that line. The wider invariant, which
+      330 and the hostmask need as much, is bead mimid-1wgh.140.11.
+    - **No new authorization boundary.** The three flags are set by `CAP
+      REQ`, which sets flags and nothing else, and every line above is
+      written to a connection that is already registered
+      (frontend-auth.md §4.1 holds IRC's one check). The
+      `INVALID_UTF8` reply can reach an unregistered connection, as 417
+      already does, and carries no identity.
+    - Tests: mimid-agent-irc
+      `register::tests::the_cap_list_holds_only_what_is_wired_up` (the
+      whole offer, in order, and the eight names that must stay out),
+      `register::tests::a_tag_capability_carries_its_own_tag_without_message_tags`,
+      `names::tests::an_account_that_cannot_be_written_has_none`,
+      `render::tests::an_extended_join_names_the_account_and_the_realname`,
+      `render::tests::an_extended_join_of_a_hostile_uri_is_a_star_and_fits`,
+      `line::tests::server_tags_are_written_before_client_only_tags`;
+      mimid-agent `tests/irc_v2.rs`
+      `extended_join_and_account_tag_carry_the_user_uri` (three
+      connections of one user with three cap sets, and a split message
+      whose every line carries the tag),
+      `the_caps_mimid_cannot_honour_are_naked`,
+      `a_line_that_is_not_utf8_fails_with_invalid_utf8` (the FAIL, the
+      NOTICE without the capability, and a valid line after it as the
+      proof nothing was relayed).
 
 
 ## 8. The sync trigger: the provider's EventSource (bead mimid-ak29)

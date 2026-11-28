@@ -244,6 +244,31 @@ pub(crate) struct Caps {
     pub(crate) webpush: bool,
     pub(crate) message_redaction: bool,
     pub(crate) multi_prefix: bool,
+    pub(crate) account_tag: bool,
+    pub(crate) extended_join: bool,
+    pub(crate) standard_replies: bool,
+}
+
+impl Caps {
+    /// Whether tag `key` is written to a client with these capabilities.
+    ///
+    /// `message-tags` is support for every well-formed tag. Without it,
+    /// `account-tag`, `server-time` and `batch` each "implicitly depend
+    /// on the tag format", and a client that negotiates one of them
+    /// "MUST support the full tag format"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Capabilities"), so
+    /// that capability's own tag is written to it and no other: the same
+    /// section says implementations "SHOULD NOT assume support for all
+    /// tags when an individual tag capability is negotiated". HexChat is
+    /// the client this is for: it negotiates `server-time` and
+    /// `account-tag` and not `message-tags`
+    /// (docs/design/client-survey.md §2 "What the clients use").
+    pub(crate) fn takes_tag(&self, key: &str) -> bool {
+        self.message_tags
+            || (self.account_tag && key == "account")
+            || (self.server_time && key == "time")
+            || (self.batch && key == "batch")
+    }
 }
 
 /// What the session showed of a channel.
@@ -387,10 +412,41 @@ impl Session {
         }
     }
 
-    /// Queues `out`, with tags if the client has message-tags.
+    /// Queues `out`, with the tags this client takes.
     pub(crate) fn send(&mut self, out: &Out) {
-        self.out
-            .extend_from_slice(out.to_wire(self.caps.message_tags).as_bytes());
+        let wire = self.tags_taken(out).to_wire(true);
+        self.out.extend_from_slice(wire.as_bytes());
+    }
+
+    /// `out` with the tags this client does not take dropped
+    /// ([`Caps::takes_tag`]).
+    fn tags_taken(&self, out: &Out) -> Out {
+        if self.caps.message_tags || out.tags.is_empty() {
+            return out.clone();
+        }
+        let mut taken = out.clone();
+        taken.tags.retain(|(key, _)| self.caps.takes_tag(key));
+        taken
+    }
+
+    /// What is left of [`MAX_LINE`] for the last parameter of `probe`,
+    /// the tags this client takes counted in.
+    ///
+    /// Tags have a budget of their own, "the size limit for the rest of
+    /// the message remains unchanged at 512 bytes"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Size limit"), and
+    /// charging them to the 512 as well is this front end's own
+    /// narrowing: every line it writes then fits 512 octets tags
+    /// included, which is what the test harness asserts of each one.
+    pub(crate) fn room_for(&self, probe: &Out) -> usize {
+        self.tags_taken(probe).room_for_trailing(true)
+    }
+
+    /// The octets `out` takes on the wire for this client, the tags it
+    /// takes counted in: for a caller whose room is in a middle
+    /// parameter and not the last ([`Session::room_for`]).
+    pub(crate) fn wire_len(&self, out: &Out) -> usize {
+        self.tags_taken(out).to_wire(true).len()
     }
 
     /// Queues `wire`, a whole line with its CR-LF.
@@ -418,7 +474,7 @@ impl Session {
     /// fit the line limit: for peer text that is not split over lines
     /// (a topic).
     pub(crate) fn send_cut(&mut self, mut out: Out) {
-        out.cut_to_fit(self.caps.message_tags);
+        out.cut_to_room(self.room_for(&out));
         self.send(&out);
     }
 
@@ -429,6 +485,23 @@ impl Session {
         all.extend(params.iter().map(|p| (*p).to_owned()));
         let out = Out::new(&self.shared.server, code, all);
         self.send_cut(out);
+    }
+
+    /// Queues `FAIL <command> <code> [<context>...] <description>` from
+    /// the server, its description cut to fit
+    /// (~/PROJECT/IETF/specs/ircv3-standard-replies.md, "Message
+    /// Format"; the `standard-replies` capability).
+    ///
+    /// `command` is `*` where the reply "is initiated outside the
+    /// context of a client command" or "the client command is not
+    /// available or cannot be relayed" (ibid.), which is the case for a
+    /// line that could not be parsed.
+    pub(crate) fn fail(&mut self, command: &str, code: &str, context: &[&str], description: &str) {
+        let mut params = vec![command.to_owned(), code.to_owned()];
+        params.extend(context.iter().map(|c| (*c).to_owned()));
+        params.push(description.to_owned());
+        let server = self.shared.server.clone();
+        self.send_cut(Out::new(&server, "FAIL", params));
     }
 
     /// Queues a NOTICE from the server to the client.
@@ -538,7 +611,25 @@ impl Session {
             return;
         }
         let Ok(text) = std::str::from_utf8(bytes) else {
-            self.server_notice("mimid: that line was not UTF-8 and was not sent (UTF8ONLY)");
+            // ~/PROJECT/IETF/specs/ircv3-utf8-only.md: a server
+            // publishing UTF8ONLY in 005 "MUST NOT relay content ...
+            // containing non-UTF-8 data", and handling of such a line
+            // "is implementation-defined; for example, they MAY send the
+            // `INVALID_UTF8` code". The command is `*` and not a verb
+            // read out of undecodable octets. The NOTICE stays for a
+            // client without `standard-replies`, which has no contract
+            // to show an unrecognised FAIL and would otherwise see
+            // nothing at all.
+            if self.caps.standard_replies {
+                self.fail(
+                    "*",
+                    "INVALID_UTF8",
+                    &[],
+                    "That line was not UTF-8 and was not sent",
+                );
+            } else {
+                self.server_notice("mimid: that line was not UTF-8 and was not sent (UTF8ONLY)");
+            }
             return;
         };
         let Some(line) = line::parse(text) else {

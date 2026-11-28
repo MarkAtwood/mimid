@@ -34,12 +34,20 @@
 //! - **Registration**: `CAP LS 302` (`message-tags`, `server-time`,
 //!   `echo-message`, `sasl`, `soju.im/account-required`, `batch`,
 //!   `draft/chathistory`, `draft/event-playback`, `draft/read-marker`,
-//!   `draft/message-redaction`, `multi-prefix`, `soju.im/webpush` when
+//!   `draft/message-redaction`, `multi-prefix`, `account-tag`,
+//!   `extended-join`, `standard-replies`, `soju.im/webpush` when
 //!   push is on),
 //!   `CAP REQ`
 //!   acknowledged or refused as a whole; the
 //!   client's nick is replaced by the user's own (`<local>-<label>`), 001
 //!   to 005, 900 with the user URI, 422.
+//! - **Which MIMI user a nick is** (§7.40): with `extended-join` the
+//!   JOIN carries the user URI as the account and the realname, the
+//!   string 311 and 330 send; with `account-tag` every line from a user
+//!   carries `@account=<uri>`, whether or not the client also asked for
+//!   `message-tags`. With `standard-replies` a line that is not UTF-8
+//!   is answered `FAIL * INVALID_UTF8`, where every other client gets a
+//!   NOTICE.
 //! - **Server queries**: `ADMIN` (256 to 259, and 402 for a target that
 //!   names another server), `LUSERS` (251 to 255, 265, 266) and `LINKS`
 //!   (one 364, then 365) answer with the agent's own facts -- the user
@@ -124,8 +132,27 @@
 //!   keeping it off the wrong network is the operator's, with a firewall
 //!   or a proxy (decision mimid-1wgh.92). A credential is still required
 //!   either way. A TLS handshake must end within [`HANDSHAKE_WITHIN`].
-//! - No attachments, history playback without chathistory,
-//!   labeled-response, or sending edits from IRC (§4 "Sending", §7).
+//! - No attachments, history playback without chathistory, or sending
+//!   edits from IRC (§4 "Sending", §7).
+//! - Five IRCv3 capabilities are not offered, each because no line
+//!   exists for it (§7.40): `away-notify`, there being no away state at
+//!   all; `account-notify`, a nick's account being its user URI and
+//!   never moved to another person; `invite-notify`, a third party's
+//!   invite being invisible in the store's participant record;
+//!   `chghost`, the user and host coming from that URI; and
+//!   `labeled-response`, the answers a label would ride on coming back
+//!   later from the change feed and not from the command's dispatch.
+//! - `standard-replies` is offered, and its RECOMMENDED replacement of
+//!   the remaining failure notices with standard replies is not done:
+//!   the specification requires a registered reply code where one
+//!   exists, and that registry is not among the local specification
+//!   files, so an invented code could collide with a real one
+//!   (`register::CAPS`).
+//! - A user URI longer than [`names::MAX_ACCOUNT`], or holding a
+//!   character IRC cannot write, is shown as the `*` account and
+//!   carries no `account` tag (decision mimid-1wgh.150). The same URI
+//!   still reaches the wire raw in 311, 330, 352 and every hostmask,
+//!   which is bead mimid-1wgh.140.11.
 //! - A user not seen yet has no nick: a first private message to them
 //!   names them by user URI or `user@domain`.
 //! - `KICK` removes the user's devices from the room (`Store::kick`); they

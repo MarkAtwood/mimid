@@ -517,7 +517,13 @@ impl Session {
                 // docs/irc-lessons.md "Answer a JOIN under the name it
                 // asked for").
                 let me = self.me();
-                self.send(&Out::new(&me.mask(), "JOIN", vec![target.to_owned()]));
+                let out = crate::render::join_line(
+                    &me,
+                    target,
+                    self.caps.extended_join,
+                    self.caps.account_tag,
+                );
+                self.send(&out);
                 self.part_own(target, "accepted");
             }
             return;

@@ -331,9 +331,10 @@ async fn registration_queries_and_refusals() {
     assert_eq!(
         ls.raw,
         format!(
-            ":{SERVER} CAP * LS :batch draft/chathistory draft/event-playback \
-             draft/message-redaction draft/read-marker echo-message message-tags multi-prefix \
-             sasl=PLAIN,SCRAM-SHA-256 server-time soju.im/account-required soju.im/webpush"
+            ":{SERVER} CAP * LS :account-tag batch draft/chathistory draft/event-playback \
+             draft/message-redaction draft/read-marker echo-message extended-join message-tags \
+             multi-prefix sasl=PLAIN,SCRAM-SHA-256 server-time soju.im/account-required \
+             soju.im/webpush standard-replies"
         )
     );
     irc.send(&format!("PASS {token}")).await;

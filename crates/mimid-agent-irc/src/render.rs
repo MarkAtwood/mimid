@@ -58,6 +58,70 @@ pub(crate) fn now_ms() -> u64 {
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
+/// The JOIN of `who` into `channel`.
+///
+/// With `extended` it is the extended-join form, "`:nick!user@host JOIN
+/// #channelname accountname :Real Name`"
+/// (~/PROJECT/IETF/specs/ircv3-extended-join.md, "Description"), the
+/// account and the realname both the user URI
+/// ([`crate::names::account_param`]): the realname this front end
+/// reports is the URI everywhere, in 311 `RPL_WHOISUSER` and in 352
+/// `RPL_WHOREPLY`, so a client reading any of the three gets one answer.
+/// The trailing `:` the specification's example shows before the
+/// realname is written only where the grammar needs it
+/// ([`Out::to_wire`]).
+///
+/// With `account` it carries the `account` tag, the tag every line from
+/// a user carries ([`account_tag`]).
+pub(crate) fn join_line(who: &Identity, channel: &str, extended: bool, account: bool) -> Out {
+    let mut params = vec![channel.to_owned()];
+    if extended {
+        let param = crate::names::account_param(&who.uri).to_owned();
+        params.push(param.clone());
+        params.push(param);
+    }
+    let mut out = Out::new(&who.mask(), "JOIN", params);
+    if account {
+        out.tags.extend(account_tag(who, true));
+    }
+    out
+}
+
+/// The `account` tag of a line whose sender is `who`, for a client with
+/// account-tag (`on`): "The tag MUST be named `account`, and contain the
+/// sender's current services username. (If the user is not identified to
+/// any services account, the tag MUST NOT be sent.)"
+/// (~/PROJECT/IETF/specs/ircv3-account-tag.md, "Description"). The
+/// account is the user URI (§7.15), where that URI can be written
+/// ([`crate::names::account_of`]).
+///
+/// The tag goes on every line whose source is a user's hostmask, the
+/// specification's "all commands sent by a user (e.g. PRIVMSG, MODE,
+/// NOTICE, and all others)". Three kinds of line do not carry it and
+/// cannot:
+///
+/// - numerics. The specification's SHOULD for "numerics directly caused
+///   by the sender" was "relaxed to SHOULD after it was found to be
+///   widely not implemented" (ibid., "Errata"), and every numeric this
+///   front end sends answers the client's own command, where the
+///   client's own account tells it nothing it did not send.
+/// - the MODE lines of a role change, and the TOPIC of a subject whose
+///   setter is unknown. The specification names MODE among the commands
+///   that MUST carry the tag, but a role change has no actor in the
+///   store's record (`mimid_agent_store::record::Participant` carries a
+///   user and a role), so these lines are sourced from the server and
+///   there is no account to attach.
+/// - the service's NOTICE (`crate::service`) and the Web Push preview
+///   (`crate::webpush`): the service stands for no MIMI user, and a push
+///   payload goes to a push service and not to a client that negotiated
+///   anything.
+pub(crate) fn account_tag(who: &Identity, on: bool) -> Vec<(String, String)> {
+    match crate::names::account_of(&who.uri) {
+        Some(account) if on => vec![("account".to_owned(), account.to_owned())],
+        _ => Vec::new(),
+    }
+}
+
 /// IRCv3 server-time's `time`: `YYYY-MM-DDThh:mm:ss.sssZ`.
 pub(crate) fn server_time(ms: u64) -> String {
     let date = mimid_agent_store::convert::utc_date(ms);
@@ -232,7 +296,8 @@ impl Session {
             return;
         };
         let me = self.me();
-        self.send(&Out::new(&me.mask(), "JOIN", vec![name.clone()]));
+        let out = join_line(&me, &name, self.caps.extended_join, self.caps.account_tag);
+        self.send(&out);
         let why = match peer {
             Some(peer) => format!("a private query with {}", self.shared.names().nick(&peer)),
             None => "a private query".to_owned(),
@@ -297,18 +362,27 @@ impl Session {
                 continue;
             }
             let who = self.shared.names().identity(uri);
-            let out = Out::new(
+            let mut out = Out::new(
                 &who.mask(),
                 "PART",
                 vec![channel.clone(), "no longer in this room".into()],
             );
+            out.tags.extend(account_tag(&who, self.caps.account_tag));
             self.send(&out);
         }
         for (who, op) in &now {
             match view.members.get(&who.uri) {
                 None => {
-                    self.send(&Out::new(&who.mask(), "JOIN", vec![channel.clone()]));
+                    let out = join_line(
+                        who,
+                        &channel,
+                        self.caps.extended_join,
+                        self.caps.account_tag,
+                    );
+                    self.send(&out);
                     if *op {
+                        // From the server and so with no `account` tag
+                        // ([`account_tag`]).
                         self.send(&Out::new(
                             &server,
                             "MODE",
@@ -332,11 +406,13 @@ impl Session {
                 .topic_set
                 .as_ref()
                 .map_or_else(|| server.clone(), |(who, _)| who.mask());
-            self.send_cut(Out::new(
-                &source,
-                "TOPIC",
-                vec![channel.clone(), shown.topic.clone()],
-            ));
+            let mut out = Out::new(&source, "TOPIC", vec![channel.clone(), shown.topic.clone()]);
+            // Only where the setter is known: the fallback is the
+            // server's own line ([`account_tag`]).
+            if let Some((who, _)) = &shown.topic_set {
+                out.tags.extend(account_tag(who, self.caps.account_tag));
+            }
+            self.send_cut(out);
         }
         self.channels.insert(
             key.to_owned(),
@@ -355,7 +431,13 @@ impl Session {
         let channel = shown.channel.clone();
         // In the room again: a reason for leaving it before is spent.
         self.shared.set_part_reason(key, None);
-        self.send(&Out::new(&me.mask(), "JOIN", vec![channel.clone()]));
+        let out = join_line(
+            &me,
+            &channel,
+            self.caps.extended_join,
+            self.caps.account_tag,
+        );
+        self.send(&out);
         // draft/read-marker: after the JOIN, before the end of the names.
         if self.caps.read_marker {
             let out = self.marker_line(&channel, key);
@@ -411,7 +493,7 @@ impl Session {
             "353",
             vec![self.target(), "=".into(), channel.to_owned(), String::new()],
         );
-        let room = probe.room_for_trailing(self.caps.message_tags);
+        let room = self.room_for(&probe);
         for list in crate::line::pack_words(&words, room) {
             self.numeric("353", &["=", channel, &list]);
         }
@@ -421,11 +503,13 @@ impl Session {
     /// PART of `channel` from the user's own hostmask.
     pub(crate) fn part_own(&mut self, channel: &str, reason: &str) {
         let me = self.me();
-        self.send(&Out::new(
+        let mut out = Out::new(
             &me.mask(),
             "PART",
             vec![channel.to_owned(), reason.to_owned()],
-        ));
+        );
+        out.tags.extend(account_tag(&me, self.caps.account_tag));
+        self.send(&out);
     }
 
     /// Message `key` with what showing it needs, if its room is shown as
@@ -517,7 +601,8 @@ impl Session {
     /// (split to fit, `/me ` as ACTION), then each call as an ACTION line
     /// (§7.24); a notice of the agent's as a NOTICE from the server. The
     /// first line carries `msgid` and `+draft/reply`, every line `time`
-    /// with server-time and `every` (a `batch` tag).
+    /// with server-time, `every` (a `batch` tag) and, from a sender with
+    /// account-tag, `account`.
     pub(crate) fn message_lines(
         &mut self,
         m: &MessageShown,
@@ -539,6 +624,13 @@ impl Session {
         match &m.sender {
             Some(sender) => {
                 let mask = sender.mask();
+                // The sender's `account` on every line and not only the
+                // first, this being where the text is split: the tag is
+                // part of what `text_lines` measures a piece against
+                // ([`account_tag`]).
+                let mut from_sender = every.to_vec();
+                from_sender.extend(account_tag(sender, self.caps.account_tag));
+                let every: &[(String, String)] = &from_sender;
                 let mut tags = Some(tags);
                 if !m.record.body.is_empty() {
                     let body = match &m.reply_nick {
@@ -599,11 +691,17 @@ impl Session {
             .sender
             .as_ref()
             .map_or_else(|| self.shared.server.clone(), crate::names::Identity::mask);
-        Out::new(
+        let mut out = Out::new(
             &source,
             "REDACT",
             vec![m.target.clone(), m.record.sender_msg_id.clone()],
-        )
+        );
+        // A command from a user, so it carries the sender's `account`
+        // ([`account_tag`]).
+        if let Some(sender) = &m.sender {
+            out.tags.extend(account_tag(sender, self.caps.account_tag));
+        }
+        out
     }
 
     /// The NOTICE that says the sender of `m` retracted it: from the
@@ -664,6 +762,10 @@ impl Session {
                 Some(sender) => sender.mask(),
                 None => self.shared.server.clone(),
             };
+            let every = match &m.sender {
+                Some(sender) => account_tag(sender, self.caps.account_tag),
+                None => Vec::new(),
+            };
             for out in self.text_lines(
                 &source,
                 "PRIVMSG",
@@ -671,7 +773,7 @@ impl Session {
                 &m.record.body,
                 "(edited) ",
                 tags,
-                &[],
+                &every,
                 edited_at,
             ) {
                 self.send(&out);
@@ -743,6 +845,7 @@ impl Session {
             if let Some(time) = time {
                 out = out.tag("time", &time);
             }
+            out.tags.extend(account_tag(&who, self.caps.account_tag));
             self.send_cut(out);
         }
     }
@@ -789,7 +892,7 @@ impl Session {
             let mut probe = Out::new(source, command, vec![target.to_owned(), String::new()]);
             probe.tags.clone_from(&tags);
             probe.tags.extend(common.iter().cloned());
-            let mut room = probe.room_for_trailing(self.caps.message_tags);
+            let mut room = self.room_for(&probe);
             if action {
                 room = room.saturating_sub("\x01ACTION \x01".len());
             }
@@ -827,15 +930,21 @@ impl Session {
         let me = self.me();
         for invite in invites {
             self.invites_shown.insert(invite.number);
-            let (source, channel) = {
+            let (source, inviter, channel) = {
                 let mut names = self.shared.names();
-                let source = match &invite.inviter {
-                    Some(uri) => names.identity(uri).mask(),
-                    None => self.shared.server.clone(),
-                };
-                (source, names.invite_channel(&invite))
+                let inviter = invite.inviter.as_ref().map(|uri| names.identity(uri));
+                let source = inviter
+                    .as_ref()
+                    .map_or_else(|| self.shared.server.clone(), Identity::mask);
+                (source, inviter, names.invite_channel(&invite))
             };
-            self.send(&Out::new(&source, "INVITE", vec![me.nick.clone(), channel]));
+            let mut out = Out::new(&source, "INVITE", vec![me.nick.clone(), channel]);
+            // Only where an inviter is known; an invite whose Welcome
+            // named none is the server's own line ([`account_tag`]).
+            if let Some(inviter) = &inviter {
+                out.tags.extend(account_tag(inviter, self.caps.account_tag));
+            }
+            self.send(&out);
         }
     }
 
@@ -868,6 +977,76 @@ fn latest_ref(record: &Message) -> Option<mimid_agent_store::convert::MessageRef
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::names::{CHANNELLEN, MAX_ACCOUNT, NICKLEN};
+
+    fn bob() -> Identity {
+        Identity {
+            uri: "mimi://a.example/u/bob".to_owned(),
+            nick: "bob-a".to_owned(),
+            user: "bob".to_owned(),
+            host: "a.example".to_owned(),
+        }
+    }
+
+    /// Oracles: ~/PROJECT/IETF/specs/ircv3-extended-join.md, "The JOIN
+    /// message is one of the following", written out by hand;
+    /// ircv3-account-tag.md, "The tag MUST be named `account`".
+    ///
+    /// meshIRCd prints the same shape with its own format string
+    /// (~/PROJECT/meshIRCd/main.go `":%s JOIN %s %s :%s"`), where the
+    /// realname is written as a trailing parameter; here the `:` is
+    /// written only where the grammar needs it, which Modern allows of
+    /// any last parameter without a space (§"Parameters").
+    #[test]
+    fn an_extended_join_names_the_account_and_the_realname() {
+        let who = bob();
+        let plain = join_line(&who, "#c", false, false);
+        assert_eq!(plain.to_wire(true), ":bob-a!bob@a.example JOIN #c\r\n");
+        let tagged = join_line(&who, "#c", false, true);
+        assert_eq!(
+            tagged.to_wire(true),
+            "@account=mimi://a.example/u/bob :bob-a!bob@a.example JOIN #c\r\n"
+        );
+        let extended = join_line(&who, "#c", true, false);
+        assert_eq!(
+            extended.to_wire(true),
+            ":bob-a!bob@a.example JOIN #c mimi://a.example/u/bob mimi://a.example/u/bob\r\n"
+        );
+        let both = join_line(&who, "#c", true, true);
+        assert_eq!(
+            both.to_wire(true),
+            "@account=mimi://a.example/u/bob :bob-a!bob@a.example JOIN #c \
+             mimi://a.example/u/bob mimi://a.example/u/bob\r\n"
+        );
+    }
+
+    /// Oracle: decision mimid-1wgh.150: `*` and no tag for a URI that
+    /// cannot be written, and [`MAX_ACCOUNT`] chosen so that the longest
+    /// JOIN line this front end can write stays inside
+    /// [`crate::line::MAX_LINE`].
+    #[test]
+    fn an_extended_join_of_a_hostile_uri_is_a_star_and_fits() {
+        let mut who = bob();
+        who.uri = "mimi://a.example/u/b ob".to_owned();
+        let out = join_line(&who, "#c", true, true);
+        assert!(out.tags.is_empty(), "{:?}", out.tags);
+        assert_eq!(out.params, ["#c", "*", "*"]);
+        assert_eq!(out.to_wire(true), ":bob-a!bob@a.example JOIN #c * *\r\n");
+        // Every part at its limit: a nick of NICKLEN, a channel of
+        // CHANNELLEN and a URI of MAX_ACCOUNT, written twice.
+        let local = "a".repeat(MAX_ACCOUNT - "mimi://a.example/u/".len());
+        let who = Identity {
+            uri: format!("mimi://a.example/u/{local}"),
+            nick: "n".repeat(NICKLEN),
+            user: local,
+            host: "a.example".to_owned(),
+        };
+        let channel = format!("#{}", "c".repeat(CHANNELLEN - 1));
+        let out = join_line(&who, &channel, true, true);
+        assert_eq!(out.params[1].len(), MAX_ACCOUNT);
+        let wire = out.to_wire(true);
+        assert!(wire.len() <= crate::line::MAX_LINE, "{} octets", wire.len());
+    }
 
     /// Oracle: the IRC custom of addressing a line to a nick (`bob: hi`),
     /// and §4 "CTCP from the user" for `/me`.

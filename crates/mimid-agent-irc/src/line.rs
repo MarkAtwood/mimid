@@ -167,7 +167,8 @@ pub fn escape_tag_value(value: &str) -> String {
 /// A line the server writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Out {
-    /// Tags, written only to a client with message-tags on.
+    /// Tags, written to a client that takes them
+    /// (`crate::conn::Caps::takes_tag`).
     pub tags: Vec<(String, String)>,
     /// The source: the server's name or a hostmask.
     pub source: String,
@@ -197,12 +198,21 @@ impl Out {
     }
 
     /// The line on the wire, CR-LF included; tags only if `with_tags`.
+    ///
+    /// The server's own tags are written before the client-only ones
+    /// (those whose key starts with `+`), whatever order the caller
+    /// built them in: "Any server-sent tags attached to messages MUST be
+    /// included before client-only tags to prevent them from being
+    /// pushed outside of the byte limit"
+    /// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Client-only tags").
     #[must_use]
     pub fn to_wire(&self, with_tags: bool) -> String {
         let mut out = String::new();
         if with_tags && !self.tags.is_empty() {
             out.push('@');
-            for (i, (key, value)) in self.tags.iter().enumerate() {
+            let server = self.tags.iter().filter(|(key, _)| !key.starts_with('+'));
+            let client_only = self.tags.iter().filter(|(key, _)| key.starts_with('+'));
+            for (i, (key, value)) in server.chain(client_only).enumerate() {
                 if i > 0 {
                     out.push(';');
                 }
@@ -234,7 +244,13 @@ impl Out {
     /// included if `with_tags`, fits [`MAX_LINE`]: for peer text that is
     /// shown on one line only (a topic).
     pub fn cut_to_fit(&mut self, with_tags: bool) {
-        let room = self.room_for_trailing(with_tags);
+        self.cut_to_room(self.room_for_trailing(with_tags));
+    }
+
+    /// Cuts the last parameter on a UTF-8 boundary to `room` octets: for
+    /// a caller that worked out the room itself, the tags a given client
+    /// takes counted in (`Session::room_for`).
+    pub fn cut_to_room(&mut self, room: usize) {
         if let Some(last) = self.params.last_mut()
             && last.len() > room
         {
@@ -424,6 +440,38 @@ mod tests {
         assert_eq!(
             room,
             MAX_LINE - "@msgid=01J;+draft/reply=x\\sy :s.x PRIVMSG #c :\r\n".len()
+        );
+    }
+
+    /// Oracle: ~/PROJECT/IETF/specs/ircv3-message-tags.md, "Client-only
+    /// tags": "Any server-sent tags attached to messages MUST be
+    /// included before client-only tags to prevent them from being
+    /// pushed outside of the byte limit."
+    ///
+    /// A caller adds tags in the order its own line reads best —
+    /// `msgid`, then the client-only `+draft/reply`, then `time` and
+    /// `account` for every line of a split message — so the order is
+    /// settled here and not at each call.
+    #[test]
+    fn server_tags_are_written_before_client_only_tags() {
+        let out = Out::new("s.x", "PRIVMSG", vec!["#c".into(), "hi".into()])
+            .tag("msgid", "01J")
+            .tag("+draft/reply", "01H")
+            .tag("time", "2026-11-28T00:00:00.000Z")
+            .tag("account", "mimi://a.example/u/alice");
+        assert_eq!(
+            out.to_wire(true),
+            "@msgid=01J;time=2026-11-28T00:00:00.000Z;account=mimi://a.example/u/alice;\
+             +draft/reply=01H :s.x PRIVMSG #c hi\r\n"
+        );
+        // The room for the text counts the same octets, wherever the
+        // tags were added.
+        assert_eq!(
+            out.room_for_trailing(true),
+            MAX_LINE
+                - "@msgid=01J;time=2026-11-28T00:00:00.000Z;account=mimi://a.example/u/alice;\
+                   +draft/reply=01H :s.x PRIVMSG #c :\r\n"
+                    .len()
         );
     }
 

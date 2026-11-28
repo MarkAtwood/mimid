@@ -138,6 +138,60 @@ impl Identity {
     }
 }
 
+/// The longest user URI written as an account (decision mimid-1wgh.150).
+///
+/// A JOIN line under extended-join carries the URI three times — the
+/// `account` tag and the account and realname parameters — and its local
+/// part and domain a fourth time inside the hostmask, and nothing cuts
+/// that line. This is the length that keeps it inside
+/// [`crate::line::MAX_LINE`] with a nick at [`NICKLEN`] and a channel at
+/// [`CHANNELLEN`]: `@account=<uri> :<mask> JOIN <channel> <uri> <uri>`
+/// is then 491 octets of the 512. Tags have a budget of their own
+/// (~/PROJECT/IETF/specs/ircv3-message-tags.md, "Size limit"), and this
+/// front end charges them to the 512 as well
+/// (`Session::room_for`).
+///
+/// Nothing between an MLS credential and this module bounds a user URI
+/// (bead mimid-1wgh.140.11).
+pub const MAX_ACCOUNT: usize = 96;
+
+/// The account `uri` names: the URI itself, where it can be written both
+/// as a parameter and as a tag value; `None` otherwise.
+///
+/// `None` is what both capabilities say for a nick whose account is not
+/// known: the tag "MUST NOT be sent"
+/// (~/PROJECT/IETF/specs/ircv3-account-tag.md, "Description") and the
+/// JOIN parameter is `*` ([`account_param`]). Decision mimid-1wgh.150
+/// says why a URI mimid cannot write gets the answer meant for a user
+/// who has no account.
+///
+/// A user URI reaches this front end from a peer's credential and from
+/// the client's own line, so the check is on the string, not on where it
+/// came from: a user URI ([`parse_user_uri`]), at most [`MAX_ACCOUNT`]
+/// octets, and writable as a middle parameter
+/// ([`crate::line::is_middle_param`], which rejects the space, CR and LF
+/// that would split or end the line, the NUL that RFC 1459 §2.3 forbids
+/// and [`crate::line::escape_tag_value`] does not escape, and the
+/// leading `:` that would make the parameter trailing).
+#[must_use]
+pub fn account_of(uri: &str) -> Option<&str> {
+    (parse_user_uri(uri).is_some() && uri.len() <= MAX_ACCOUNT && crate::line::is_middle_param(uri))
+        .then_some(uri)
+}
+
+/// The `<account>` parameter and `<realname>` of an extended JOIN for
+/// `uri`: the URI, or `*` where [`account_of`] has none.
+///
+/// `*` is the second of the two forms
+/// ~/PROJECT/IETF/specs/ircv3-extended-join.md defines, "that the user
+/// has not logged in to an account prior to channel ingress"; the spec
+/// notes that "an asterisk is not a valid account name", so it cannot be
+/// read as one (decision mimid-1wgh.150).
+#[must_use]
+pub fn account_param(uri: &str) -> &str {
+    account_of(uri).unwrap_or("*")
+}
+
 /// Whether `c` may be in a nick.
 fn nick_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
@@ -719,6 +773,47 @@ mod tests {
     use super::*;
 
     const ME: &str = "mimi://a.example/u/alice";
+
+    /// Oracles: ~/PROJECT/IETF/specs/ircv3-extended-join.md, the `*`
+    /// form "that the user has not logged in to an account";
+    /// ircv3-account-tag.md, that the tag "MUST NOT be sent" for a user
+    /// who is not identified; decision mimid-1wgh.150 for which of the
+    /// two a URI mimid cannot write gets.
+    ///
+    /// A user URI reaches this module from a peer's MLS credential,
+    /// where nothing rejects a space, a control character or a length
+    /// (bead mimid-1wgh.140.11), so every one of these is reachable.
+    #[test]
+    fn an_account_that_cannot_be_written_has_none() {
+        assert_eq!(account_of(ME), Some(ME));
+        assert_eq!(account_param(ME), ME);
+        for bad in [
+            "mimi://a.example/u/a b",
+            "mimi://a.example/u/a\0b",
+            "mimi://a.example/u/a\rb",
+            "mimi://a.example/u/a\nb",
+            "mimi://a example/u/bob",
+            // Not a user URI at all: `Names::identity` copies whatever
+            // it is given into `Identity.uri`, and `base_identity`
+            // falls back to `unknown.invalid` without rejecting it.
+            "",
+            "alice",
+            ":alice",
+            "mimi://a.example/r/room1",
+            "https://a.example/u/alice",
+        ] {
+            assert_eq!(account_of(bad), None, "{bad:?}");
+            assert_eq!(account_param(bad), "*", "{bad:?}");
+        }
+        // At the limit and one octet past it.
+        let fill = MAX_ACCOUNT - "mimi://a.example/u/".len();
+        let at = format!("mimi://a.example/u/{}", "a".repeat(fill));
+        assert_eq!(at.len(), MAX_ACCOUNT);
+        assert_eq!(account_of(&at), Some(at.as_str()));
+        let past = format!("{at}a");
+        assert_eq!(account_of(&past), None);
+        assert_eq!(account_param(&past), "*");
+    }
 
     fn room(key: &str, uri: &str, name: Option<&str>) -> Room {
         serde_json::from_value(json!({
