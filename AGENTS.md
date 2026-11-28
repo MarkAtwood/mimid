@@ -106,6 +106,10 @@ mimid ships no UI of its own (decision mimid-1wgh.38). Any standard JMAP Chat cl
 ## Rust conventions
 
 - Put `#![forbid(unsafe_code)]` at every crate root.
+- With `#[tracing::instrument(skip_all)]`, write every span field as
+  `name = expr`. A bare identifier names an argument that `skip_all`
+  skipped, so the field is declared and never recorded, and the span
+  carries nothing under that name.
 - Library crates use `thiserror` with `#[non_exhaustive]` public enums; only binaries use `anyhow`.
 - No `unwrap` or `expect` on any path a network or socket input can reach.
 - A type that only a checked constructor may build (verified or authenticated messages) lives in a submodule with private fields, never at the crate root.

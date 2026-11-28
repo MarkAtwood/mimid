@@ -957,6 +957,17 @@ impl Store {
     /// reply to a message the store does not hold, and
     /// [`ActionError::NotReferable`] for one to a notice or to a message
     /// of another room. Nothing is then sent.
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_send",
+        skip_all,
+        fields(
+            user = %self.user,
+            room = %room,
+            files = files.len(),
+            msgid = tracing::field::Empty
+        )
+    )]
     pub async fn send_message(
         &self,
         key: Key,
@@ -997,6 +1008,13 @@ impl Store {
         let sent = agent
             .send_message_with(&uri, text, &outgoing, &content)
             .await?;
+        // The id the agent computed, on the outermost span of this send:
+        // every line written below it names the message (bead
+        // mimid-604m).
+        let span = tracing::Span::current();
+        if !span.is_disabled() {
+            span.record("msgid", crate::blobs::hex(&sent.message_id.0).as_str());
+        }
         let mut state = self.state();
         let seq = state.take_seq();
         let message = Message {

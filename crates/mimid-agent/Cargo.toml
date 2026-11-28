@@ -104,6 +104,9 @@ jmap-types = { git = "https://github.com/MarkAtwood/crate-jmap", rev = "a28bf508
 mimid-agent-core = { path = "../mimid-agent-core", features = ["fail-points"] }
 # The calls test sends mimi-content-10 §5.10's conferencing example.
 mimi-content = { path = "../mimi-content" }
+# tests/message_path.rs reads back the spans both binaries open, which is
+# what a collector would receive (`timeline`, behind `testing`).
+mimid-telemetry = { path = "../mimid-telemetry", features = ["testing"] }
 mimid-server = { path = "../mimid-server" }
 tempfile = "=3.23.0"
 # A JMAP WebSocket client for the call-negotiation test (bead

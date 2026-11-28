@@ -267,7 +267,7 @@ endpoint = "http://127.0.0.1:4318"
 Two differences from the server:
 
 - `service.instance.id` is `user_uri`, so a collector that holds several agents, or an agent and its provider, can tell them apart. It also tells the collector which user this agent is; leave the table out if you do not want that.
-- The agent opens no spans yet, so `traces` has nothing to export. The log records and the metrics do not need one.
+- The spans follow a message, not a user action: `store_send`, `store_sync` and `store_received` in the store, `agent_send_content` and `agent_receive` in the agent, and under those `mls_encrypt_and_stage`, `provider_submit`, `finish_outbox`, `provider_fetch` and `handle_message`. They are at DEBUG, which `[telemetry] span_level` exports without the log printing them. `store_send`, `agent_send_content` and `store_received` carry `msgid`, the message ID as lowercase hex, the rendering a record and an IRC `msgid` tag already use, so one message's path can be followed across both binaries. A front end's own work has no span, so a trace starts at the store.
 
 `service_name` defaults to `mimid` in both binaries. Set it to `mimid-agent` if one collector takes the agent's export and a server's, so the two are not one service.
 

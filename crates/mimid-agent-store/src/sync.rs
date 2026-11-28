@@ -223,7 +223,22 @@ impl Store {
     /// [`SyncError::Agent`] if polling fails, and [`SyncError::Save`] if
     /// the save does. Either way nothing is lost: the agent keeps what it
     /// has not had acknowledged.
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_sync",
+        skip_all,
+        fields(
+            user = %self.user,
+            messages = tracing::field::Empty,
+            joined = tracing::field::Empty,
+            problems = tracing::field::Empty
+        )
+    )]
     pub async fn sync(&self) -> Result<SyncReport, SyncError> {
+        // Taking the agent is the first thing a sync does and the thing
+        // every front end then waits for, so the span starts before it:
+        // a sync that waited for another sync shows it here (bead
+        // mimid-604m).
         let mut agent = self.agent.lock().await;
         let mut report = SyncReport::default();
         let mut changes = Vec::new();
@@ -311,6 +326,10 @@ impl Store {
             self.record(changes);
             self.save().await.map_err(SyncError::Save)?;
         }
+        let span = tracing::Span::current();
+        span.record("messages", report.messages);
+        span.record("joined", report.joined.len());
+        span.record("problems", report.problems.len());
         Ok(report)
     }
 
@@ -960,6 +979,16 @@ impl Store {
     /// message it replaces ([`replace`]). `sent_here`: this device sent
     /// it (`Event::Sent`), so it arrived when the hub accepted it; any
     /// other message arrives now (docs/design/agent-frontends.md §7.18).
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_received",
+        skip_all,
+        fields(
+            room = %received.room,
+            msgid = tracing::field::Empty,
+            sent_here = sent_here
+        )
+    )]
     async fn store_message(
         &self,
         agent: &mut Agent,
@@ -968,6 +997,12 @@ impl Store {
         report: &mut SyncReport,
         changes: &mut Vec<Change>,
     ) {
+        // The same `msgid` the sender's `store_send` carries, so one
+        // message's path joins across the two agents (bead mimid-604m).
+        let span = tracing::Span::current();
+        if !span.is_disabled() {
+            span.record("msgid", crate::blobs::hex(&received.message_id.0).as_str());
+        }
         // Bead mimid-2vcw, option B: a new message (not an edit, a
         // retraction or a reaction) in a one-to-one room hidden here,
         // newer than every message it held, brings the room back at once,

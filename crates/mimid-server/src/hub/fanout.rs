@@ -211,6 +211,24 @@ impl<L: LocalDelivery> Fanout<L> {
 
     /// Attempts one head row: removes it on success, or records the attempt
     /// and the time of the next one.
+    ///
+    /// Its own span: this is the hop between two providers, and a
+    /// message that took a long time to arrive took it here or in the
+    /// peer (bead mimid-604m). The fields are the row's, so a trace
+    /// names the room, the peer and the sequence; the message's own id
+    /// is not here and cannot be, since the hub does not decrypt.
+    #[tracing::instrument(
+        level = "debug",
+        name = "fanout_attempt",
+        skip_all,
+        fields(
+            room_id = %row.room_id,
+            domain = %row.domain,
+            id = row.id,
+            fanout_seq = row.fanout_seq,
+            attempts = row.attempts
+        )
+    )]
     async fn attempt(&mut self, row: OutboxRow) -> Result<(), FanoutError> {
         let OutboxRow {
             id,

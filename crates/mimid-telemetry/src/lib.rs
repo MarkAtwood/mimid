@@ -44,6 +44,8 @@ mod export;
 #[cfg(feature = "export")]
 pub mod logging;
 pub mod refusals;
+#[cfg(any(test, feature = "testing"))]
+pub mod timeline;
 
 #[cfg(feature = "export")]
 pub use export::{Telemetry, TelemetryConfig, TelemetryError};

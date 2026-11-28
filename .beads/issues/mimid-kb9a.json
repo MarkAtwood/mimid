@@ -1,0 +1,23 @@
+{
+  "id": "mimid-kb9a",
+  "title": "two_providers_over_jmap_only hangs: the runtime goes idle with the test still waiting",
+  "description": "Seen in the full-suite run of 2026-11-27 (12 test binaries at once). The test ran for 1 h 36 min with 3 seconds of CPU and no output after its first minute, and had to be killed for the run to finish. It is not slowness: run alone, immediately afterwards, it passed in 4.08 s.\n\nTHE WAIT IT IS IN. Its own line, lost to cargo's capture in the suite and seen in the standalone run: \"waiting for fanout to reach 01M8FKN3M80RXKSQ42RMP53CD8\". A fanout delivery to the other provider never arrives.\n\nEVIDENCE, from the live process before it was killed (/proc/\u003cpid\u003e/task/*/comm and wchan): 22 threads, one reactor thread in ep_poll, every worker thread and both sqlx-sqlite workers parked in futex_do_wait, 5 sockets still open. An idle runtime with the test's future still parked is a lost wake-up, and load changes the interleaving that provokes it. A debugger could not be attached (ptrace_scope=1, no sudo), so the await is named by the test's own line and not by a backtrace.\n\nNOT THE REFUSAL RATE LIMITING of bead mimid-sami, which is in the same working tree: all seven of its call sites keep their control flow outside the new conditional, so a suppressed line changes no behaviour, and this test waits on no log line.\n\nRELATED. Bead mimid-67e0 is the same family: calls_across_two_providers kept failing on a guessed deadline, and commit 01ea50aa (\"test: wait on events, not clocks\") replaced those deadlines with event waits across the suite. A lost wake-up that a deadline used to turn into a flaky failure now turns into a hang, which is the intended trade -- the hang says the condition never held -- but it leaves the suite unable to report. Whether this is the same underlying bug as mimid-67e0.1 and mimid-67e0.2 is not known.\n\nNEXT. Provoke it under load rather than giving it a deadline: the suite in parallel, or that binary against a loaded machine, with RUST_LOG=info into a file. The question is which side dropped the fanout: the hub's delivery task, the peer's acceptance, or the follower's notify.\n",
+  "notes": "REPRODUCED 2026-11-27 in a second full-suite run: 170 s elapsed, 3 s CPU, same signature, killed again. Two of three suite runs on this machine; a third run of the same suite passed it. Alone it is 4 s.",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-27T22:57:44.758679244Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T00:01:32.415101823Z",
+  "dependencies": [
+    {
+      "issue_id": "mimid-kb9a",
+      "depends_on_id": "mimid-67e0",
+      "type": "discovered-from",
+      "created_at": "2026-11-27T22:57:44.794331694Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}

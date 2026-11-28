@@ -224,9 +224,16 @@
 //!   the `413`.
 //! - Open EventSource streams are not counted against
 //!   `maxConcurrentRequests`.
-//! - The agent opens no spans, so `[telemetry] traces` exports nothing
-//!   until the sync loop has one (bead mimid-604m). The log records and
-//!   the metrics do not depend on a span.
+//! - The spans the agent opens follow one message, not one user action:
+//!   `store_send`, `store_sync` and `store_received` in the store,
+//!   `agent_send_content` and `agent_receive` in the agent, and under
+//!   those `mls_encrypt_and_stage`, `provider_submit`,
+//!   `finish_outbox`, `provider_fetch` and `handle_message` (bead
+//!   mimid-604m). `store_send`, `agent_send_content` and
+//!   `store_received` carry `msgid`, the message ID as lowercase hex,
+//!   which is what a record, an IRC `msgid` tag and a JMAP
+//!   `senderMsgId` carry too. A front end's own work -- an IRC command,
+//!   a JMAP method -- has no span, so a trace starts at the store.
 //! - Exported telemetry carries `service.instance.id` = `user_uri`, so
 //!   the collector learns which user this agent is. A user who does not
 //!   want that leaves `[telemetry]` out, which is the default.

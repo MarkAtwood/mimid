@@ -50,6 +50,22 @@ use crate::provider::{Binding, Provider};
 use crate::state::{Held, Room, RoomStatus, State, StateDir};
 use crate::uri::{normalized_uri, user_uri_domain};
 use mimi_protocol::components::apply_commit_op;
+use tracing::Instrument;
+
+/// `octets` as lowercase hex, the rendering a message ID has everywhere
+/// else: in a record ([`mimid_agent_store::record::Octets`], whose
+/// crate is above this one), in the IRC `msgid` tag and in a JMAP
+/// `senderMsgId`. So a span's `msgid` can be joined with those (bead
+/// mimid-604m).
+fn hex(octets: &[u8]) -> String {
+    let mut text = String::with_capacity(octets.len() * 2);
+    for octet in octets {
+        use std::fmt::Write;
+        // Writing to a String cannot fail.
+        let _ = write!(text, "{octet:02x}");
+    }
+    text
+}
 
 /// mls-extensions-11 §5 `app_components`.
 const APP_COMPONENTS: u16 = 0x0001;
@@ -3041,6 +3057,12 @@ impl Agent {
     /// # Errors
     ///
     /// As [`Agent::send_content`].
+    #[tracing::instrument(
+        level = "debug",
+        name = "agent_send_content",
+        skip_all,
+        fields(room = %room, silent = silent, msgid = tracing::field::Empty)
+    )]
     pub async fn send_content_with(
         &mut self,
         room: &str,
@@ -3052,8 +3074,21 @@ impl Agent {
             .map_err(|e| AgentError::encoding("encoding mimi-content", e))?;
         let message_id = MessageId::compute(&self.me, room, &bytes, &content.salt)
             .map_err(|e| AgentError::encoding("the message ID", e))?;
+        // Every event and span under this one now names the message, so
+        // one message's path through both binaries can be read off the
+        // logs (bead mimid-604m). Rendered only when something is
+        // listening: the hex of 32 octets is an allocation per send.
+        let span = tracing::Span::current();
+        if !span.is_disabled() {
+            span.record("msgid", hex(&message_id.0).as_str());
+        }
         // One transaction: the ratchet generation the encryption uses, the
         // message's digest and its outbox entry (module outbox).
+        //
+        // Its own span: this is MLS encryption and two SQLite writes, and
+        // the submit below is a network call. A send that took seconds
+        // says here which of the two it was.
+        let staged = tracing::debug_span!("mls_encrypt_and_stage").entered();
         let (message, entry) = self.in_transaction(|agent| {
             let member = agent
                 .members
@@ -3083,9 +3118,16 @@ impl Agent {
             }
             Ok((message, entry))
         })?;
+        drop(staged);
         #[cfg(feature = "fail-points")]
         self.fail_at(FailPoint::BeforeSend)?;
-        let accepted = match self.provider.send(room, &message, silent).await {
+        let submit = tracing::debug_span!("provider_submit");
+        let accepted = match self
+            .provider
+            .send(room, &message, silent)
+            .instrument(submit)
+            .await
+        {
             Ok(accepted) => accepted,
             Err(refused @ AgentError::Refused { .. }) => {
                 self.in_transaction(|agent| agent.drop_outbox(entry))?;
@@ -3771,16 +3813,30 @@ impl Agent {
     /// rolled back, and the agent reads its state and groups again from
     /// the database. An item that cannot be handled is an
     /// [`Event::Problem`], not an error.
+    #[tracing::instrument(
+        level = "debug",
+        name = "agent_receive",
+        skip_all,
+        fields(fetched = tracing::field::Empty)
+    )]
     pub async fn receive(&mut self) -> Result<(Vec<Event>, Receipt), AgentError> {
         // What a crash or a lost answer left in the outbox goes first, so
         // a Commit of this device is merged before later Messages need its
         // epoch.
-        self.finish_outbox().await?;
+        self.finish_outbox()
+            .instrument(tracing::debug_span!("finish_outbox"))
+            .await?;
         let since = self.state.message_state.clone();
+        // The fetch and the handling below are separate spans for the
+        // same reason as the send's two halves: one is the provider's
+        // answer, the other this agent's decryption and writes (bead
+        // mimid-604m).
         let (state, messages) = self
             .provider
             .messages_since(since.as_deref(), &self.state.last_handled)
+            .instrument(tracing::debug_span!("provider_fetch"))
             .await?;
+        tracing::Span::current().record("fetched", messages.len());
         if messages
             .iter()
             .any(|message| !self.chat_rooms.contains_key(&message.chat))
@@ -3788,6 +3844,10 @@ impl Agent {
             self.read_chat_rooms(&messages).await?;
         }
         for Fetched { id, chat, body } in &messages {
+            // Scoped to the transaction below and not held across the
+            // awaits after it: a span entered across an await attaches
+            // to whatever else the thread runs meanwhile.
+            let handling = tracing::debug_span!("handle_message", message = %id);
             // Handled already: in this round, or in a Chat whose Messages
             // up to a later id are (Message ids sort in the order they
             // were stored, findings log F2), as when Messages come again
@@ -3807,9 +3867,9 @@ impl Agent {
             };
             // A leave Commit goes to the server between two transactions,
             // never inside one.
-            while let Some((room, leaf, handled)) =
-                self.in_transaction(|agent| agent.handle_message(id, chat, body, from))?
-            {
+            while let Some((room, leaf, handled)) = handling.in_scope(|| {
+                self.in_transaction(|agent| agent.handle_message(id, chat, body, from))
+            })? {
                 let mut events = Vec::new();
                 self.maybe_commit_leave(&room, leaf, &mut events).await;
                 self.deliver(events);

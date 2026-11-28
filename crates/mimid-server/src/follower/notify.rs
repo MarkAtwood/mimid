@@ -199,6 +199,20 @@ impl Follower {
     /// Returns the gap this delivery revealed, if it revealed one, so
     /// the caller can start a fill off the request path (decision
     /// mimid-1wgh.37.104.9).
+    /// Its own span: this is where a message arrives at the receiving
+    /// provider, from `/notify` or from this provider's own hub, and the
+    /// last hop before the agent is woken (bead mimid-604m).
+    #[tracing::instrument(
+        level = "debug",
+        name = "store_fanout",
+        skip_all,
+        fields(
+            room_id = %room_id,
+            from = %from,
+            fanout_seq = fanout_seq,
+            messages = tracing::field::Empty
+        )
+    )]
     async fn store_fanout(
         &self,
         room_id: &str,
@@ -214,6 +228,7 @@ impl Follower {
             return Err(FollowerError::NotRoomHub);
         }
         let received = split(body).map_err(FollowerError::InvalidRequest)?;
+        tracing::Span::current().record("messages", received.len());
         if received
             .iter()
             .any(|message| message.message.timestamp > MAX_FANOUT_TIMESTAMP)

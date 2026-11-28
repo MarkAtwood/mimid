@@ -261,7 +261,17 @@ No trace context is sent to or accepted from peers. If telemetry cannot be flush
 | `provider_auth` | every `/v1/` request carrying a `From` header | `peer`, `endpoint`, `outcome` (`authenticated`, `refused` or `observed`), then `mechanism` or `reason` |
 | `protocol_request` | every `/v1/` request that reaches its handler | `endpoint`, `peer`, and the path value under its own key (`room_id`, `target_user`, …) |
 
-`http_request`, which carries `method`, `route`, `status` and `elapsed_ms`, is at DEBUG, to keep the terminal log quiet. To send it to the collector without making the log noisy, set `span_level` rather than `RUST_LOG`:
+At DEBUG there are more, which is why `span_level` exists, and two of them are the hops a message takes. Besides `peer_call`, which each call to a peer opens, and `jmap_asset_fetch`:
+
+| Span | Opened for | Fields |
+|---|---|---|
+| `http_request` | every request | `method`, `route`, `status`, `elapsed_ms` |
+| `fanout_attempt` | each attempt to deliver one fanout row, to a peer or to this provider's own accounts | `room_id`, `domain`, `id`, `fanout_seq`, `attempts` |
+| `store_fanout` | each body of FanoutMessages arriving, from `/notify` or from this provider's own hub | `room_id`, `from`, `fanout_seq`, `messages` |
+
+Neither of the two carries the message's own ID: the hub does not decrypt, so it never sees one. A trace that follows one message across providers joins the agents' `msgid` to these by room and by `fanout_seq` (the agent's spans are in [the agent's guide](agent.md#telemetry)).
+
+To send the DEBUG spans to the collector without making the log noisy, set `span_level` rather than `RUST_LOG`:
 
 ```toml
 [telemetry]

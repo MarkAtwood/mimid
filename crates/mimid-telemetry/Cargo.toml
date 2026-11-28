@@ -13,8 +13,12 @@ description = "mimid's log format, OpenTelemetry export and refusal counters, sh
 # job, exporting it the SDK's, and a library crate that only counts does
 # not build an exporter (refusals).
 opentelemetry = { version = "=0.33.1", default-features = false, features = ["metrics"] }
-tracing.workspace = true
 # `export` only, from here down.
+# The instrumentation API. Optional because nothing outside `export` and
+# `testing` uses it: counting a refusal is the metrics API's job, and the
+# `tracing` call that writes the line is at the call site, in the crate
+# that refused.
+tracing = { workspace = true, optional = true }
 opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = ["trace", "logs", "metrics"], optional = true }
 opentelemetry-otlp = { version = "=0.33.1", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs", "metrics"], optional = true }
 opentelemetry-appender-tracing = { version = "=0.33.1", default-features = false, optional = true }
@@ -30,6 +34,7 @@ tracing-subscriber = { workspace = true, features = ["json"], optional = true }
 # two binaries turn it on; a library crate that only counts refusals
 # leaves it off.
 export = [
+    "dep:tracing",
     "dep:opentelemetry_sdk",
     "dep:opentelemetry-otlp",
     "dep:opentelemetry-appender-tracing",
@@ -41,7 +46,8 @@ export = [
     "opentelemetry/trace",
     "opentelemetry/logs",
 ]
-# The JSON capture of `logging::testing`, for another crate's tests.
+# The JSON capture of `logging::testing` and the span timeline of
+# `timeline`, for another crate's tests.
 testing = ["export"]
 
 [dev-dependencies]
@@ -49,3 +55,6 @@ opentelemetry_sdk = { version = "=0.33.1", default-features = false, features = 
 serde_json.workspace = true
 toml.workspace = true
 tracing-subscriber = { workspace = true, features = ["json"] }
+# The crate's own unit tests build `logging` and `timeline`, which need
+# the instrumentation API that is optional above.
+tracing.workspace = true

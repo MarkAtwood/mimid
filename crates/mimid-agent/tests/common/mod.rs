@@ -35,6 +35,35 @@ pub const BOB: &str = "mimi://a.example/u/bob";
 /// bob on the second provider, for the two-provider tests.
 pub const BOB_B: &str = "mimi://b.example/u/bob";
 
+/// Installs a `tracing` subscriber for this test process, once, so the
+/// in-process daemon's own events and spans can be read while a test
+/// runs (bead mimid-604m.1). Without one they went nowhere, and the only
+/// timeline a stalled test could offer came from the wait helpers, which
+/// say what they are waiting for but not what the daemon is doing.
+///
+/// `RUST_LOG` is the switch, and nothing is installed without it. A
+/// daemon's tasks run on the runtime's worker threads, and cargo's
+/// capture of a test's output is per thread, so anything written from a
+/// worker escapes it: a subscriber on by default would print on passing
+/// runs too, in the middle of other tests' output. With `RUST_LOG` set
+/// that is what was asked for.
+///
+/// `try_init` and not `init`: `no_token_in_logs` and `cert_expiry`
+/// install a capturing subscriber of their own before they start a
+/// daemon, and keep it.
+pub fn logs() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .with_ansi(false)
+                .with_test_writer()
+                .try_init();
+        }
+    });
+}
+
 /// Waits until `ready` holds of the store, woken by the change feed.
 ///
 /// `Store::subscribe` is a broadcast of the sequence number published at
@@ -234,6 +263,7 @@ impl PushControl {
 /// mimid-agent-jmap's two_accounts test does), with accounts for `users`
 /// and no peers.
 pub async fn server(dir: &Path, users: &[&'static str]) -> Server {
+    logs();
     let listener = bind().await;
     provider(listener, "a.example", dir, users, BTreeMap::new()).await
 }
@@ -437,6 +467,7 @@ pub struct Running {
 impl Running {
     /// Starts a daemon for `config` and serves it until [`Running::stop`].
     pub async fn start(config: &Config) -> Self {
+        logs();
         let daemon = Daemon::start(config).await.unwrap();
         let addr = daemon.local_addr().expect("the daemon listens for HTTP");
         let irc = daemon.irc_addr();
