@@ -1114,9 +1114,10 @@ it may still be sent from the other program."
 - **Durability.** Between two processes on one host, B sees A's
   committed writes through the shared page cache whether or not they
   reached the disk, so the handoff itself needs no `fsync`. `fsync`
-  matters for power loss. SQLite in its default rollback-journal mode
-  with its default `synchronous = FULL` (the bundled build sets no other
-  default; `libsqlite3-sys` 0.35 `build.rs`) syncs at each commit. The
+  matters for power loss. The agent's database is in WAL (decision
+  mimid-1wgh.134), and `synchronous` keeps its default `FULL` (the
+  bundled build sets no other default; `libsqlite3-sys` 0.35
+  `build.rs`), so each commit syncs the log. The
   blob store syncs each blob before renaming it into place, but not the
   directory after (`blobs.rs`, near line 470), so item 11 syncs the
   directories once. A small mimid change MAY add the directory sync

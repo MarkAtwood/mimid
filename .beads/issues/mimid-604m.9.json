@@ -1,0 +1,25 @@
+{
+  "id": "mimid-604m.9",
+  "title": "Agent::in_transaction saves twice when its step already saved",
+  "description": "Agent::in_transaction ends its step with an unconditional\n\n    self.save()?;\n\nbefore COMMIT. A step that saved on its own leaves nothing for that\nsave to write, so the UPDATE of agent_state puts back the bytes\nalready there inside the transaction.\n\nMeasured while fixing mimid-604m.7, on a poll that takes in one\nMessage. The writes of the agent_state row, read on a second\nconnection with an AFTER UPDATE trigger that reports whether the\nrecord changed (crates/mimid-agent-core/tests/state_writes.rs):\n\n    changed=true    Agent::handle_message's own save, inside the\n                    transaction: the Message marked handled\n    changed=false   in_transaction's save after the step\n    changed=true    the poll's last save: the Message state read up to\n\nSo one no-op UPDATE per received Message remains. It dirties a page\ninside a transaction that is committing anyway, so it costs no extra\ncommit and no extra fsync, which is why mimid-604m.7 left it: the\npre-save was a transaction of its own and this is not.\n\nThe same condition would cover it (the record equals the row and the\njournal is empty), but the argument is not the same one: inside the\ntransaction there is no recovery point to reason about, and the\ncallers that rely on the post-save to persist what their step changed\nhave not been looked at. For Mark.\n",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "bug",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T03:33:05.142571839Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T03:33:05.142571839Z",
+  "labels": [
+    "human"
+  ],
+  "dependencies": [
+    {
+      "issue_id": "mimid-604m.9",
+      "depends_on_id": "mimid-604m",
+      "type": "parent-child",
+      "created_at": "2026-11-28T03:33:05.22586074Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
