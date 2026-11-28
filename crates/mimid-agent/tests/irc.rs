@@ -21,6 +21,7 @@ use mimid_agent::{Config, Daemon};
 use mimid_agent_store::Store;
 use mimid_agent_store::record::{Room, RoomStatus};
 use serde_json::json;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -120,6 +121,41 @@ async fn joined(irc: &mut Irc, mask: &str, channel: &str) -> Vec<String> {
             other => panic!("unexpected {other} in the JOIN burst: {}", m.raw),
         }
     }
+}
+
+/// The test client answers the server's PING on its own, before the
+/// test reads anything, and the PING is not handed to the test as a
+/// line (bead mimid-jd8c).
+///
+/// A test that waits on the store rather than on a line says nothing on
+/// its connection for as long as that wait takes, and the front end
+/// closes a connection that has not spoken for
+/// [`mimid_agent_irc::DEFAULT_PING_AFTER`] plus
+/// [`mimid_agent_irc::DEFAULT_PONG_WITHIN`]. The socket here is a pipe,
+/// so what is pinned is the client, not the front end: the PONG is
+/// written while the test is reading the other end.
+#[tokio::test]
+async fn the_test_client_answers_a_ping_it_was_not_waiting_for() {
+    let (client, server) = tokio::io::duplex(4096);
+    let mut irc = Irc::over(client);
+    let (server_read, mut server_write) = tokio::io::split(server);
+    server_write
+        .write_all(format!(":{SERVER} PING {SERVER}\r\n:{SERVER} NOTICE * :after\r\n").as_bytes())
+        .await
+        .unwrap();
+    let mut answers = tokio::io::BufReader::new(server_read).lines();
+    assert_eq!(
+        answers.next_line().await.unwrap().unwrap(),
+        format!("PONG :{SERVER}")
+    );
+    // The line after it is the next one the test sees.
+    let next = irc.line().await;
+    assert_eq!((next.command.as_str(), next.text()), ("NOTICE", "after"));
+    assert!(
+        !irc.seen.iter().any(|m| m.command == "PING"),
+        "{:#?}",
+        irc.seen
+    );
 }
 
 /// Decision mimid-1wgh.92: the plain listener binds an address that is

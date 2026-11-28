@@ -3,9 +3,12 @@
 
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 /// One line the server sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,12 +72,60 @@ impl Msg {
     }
 }
 
+/// What writes to the socket: the reader task answers PING through it,
+/// so the test and the task share one writer.
+type Writer = Arc<Mutex<Box<dyn AsyncWrite + Send + Unpin>>>;
+
 /// An IRC connection.
+///
+/// A task owns the read half, so the connection answers the server's
+/// PING while the test is waiting on something that is not a line. A
+/// test that waits on the store says nothing on its socket for as long
+/// as that wait takes, and the front end closes a connection that has
+/// not spoken for [`mimid_agent_irc::DEFAULT_PING_AFTER`] plus
+/// [`mimid_agent_irc::DEFAULT_PONG_WITHIN`], which is what
+/// `burn_and_expire_from_irc` met while waiting for two expiry passes
+/// on a loaded machine (bead mimid-jd8c). The PING is answered and not
+/// forwarded, so a test reads only the lines it asked about; the front
+/// end clears its keepalive on any line it receives.
 pub struct Irc {
-    read: BufReader<Box<dyn AsyncRead + Send + Unpin>>,
-    write: Box<dyn AsyncWrite + Send + Unpin>,
+    lines: UnboundedReceiver<String>,
+    write: Writer,
+    reader: tokio::task::JoinHandle<()>,
     /// Every line received, in order.
     pub seen: Vec<Msg>,
+}
+
+impl Drop for Irc {
+    /// Ends the reader task, which holds the other half of the socket:
+    /// without this, dropping the connection would leave it open and the
+    /// daemon would wait for a client that is gone.
+    fn drop(&mut self) {
+        self.reader.abort();
+    }
+}
+
+/// Reads `read`, answers every PING through `write`, and sends the other
+/// lines, terminator included, to the connection.
+async fn answer_pings(read: impl AsyncRead + Unpin, write: Writer, lines: UnboundedSender<String>) {
+    let mut read = BufReader::new(read);
+    loop {
+        let mut line = String::new();
+        if read.read_line(&mut line).await.unwrap_or(0) == 0 {
+            return;
+        }
+        let msg = Msg::parse(line.trim_end_matches("\r\n"));
+        // A PING received is the server's: the client's own is a line it
+        // sent, and the answer to that is PONG.
+        if msg.command == "PING" {
+            let pong = format!("PONG :{}\r\n", msg.text());
+            if write.lock().await.write_all(pong.as_bytes()).await.is_err() {
+                return;
+            }
+        } else if lines.send(line).is_err() {
+            return;
+        }
+    }
 }
 
 impl Irc {
@@ -83,12 +134,17 @@ impl Irc {
         Self::over(stream)
     }
 
-    /// A connection over `stream`, plain or TLS.
+    /// A connection over `stream`, plain or TLS. Starts the reader task,
+    /// so it is called from a runtime.
     pub fn over(stream: impl AsyncRead + AsyncWrite + Send + Unpin + 'static) -> Self {
         let (read, write) = tokio::io::split(stream);
+        let write: Writer = Arc::new(Mutex::new(Box::new(write)));
+        let (lines, received) = unbounded_channel();
+        let reader = tokio::spawn(answer_pings(read, Arc::clone(&write), lines));
         Self {
-            read: BufReader::new(Box::new(read)),
-            write: Box::new(write),
+            lines: received,
+            write,
+            reader,
             seen: Vec::new(),
         }
     }
@@ -105,28 +161,25 @@ impl Irc {
     }
 
     pub async fn send_raw(&mut self, bytes: &[u8]) {
-        self.write.write_all(bytes).await.unwrap();
+        self.write.lock().await.write_all(bytes).await.unwrap();
     }
 
-    /// The next line, or `None` at the end of the connection.
+    /// The next line the server sent, its PING aside, or `None` at the
+    /// end of the connection.
     ///
-    /// `read_line` is an await on the socket, so the reactor wakes this
-    /// when the server writes. A server that writes nothing hangs the
-    /// test, and the line below says what is waiting; a deadline could
-    /// not tell that apart from a loaded machine, and guessing one is
-    /// what `calls_across_two_providers` kept failing on (bead
-    /// mimid-67e0).
+    /// The reader task is woken by the reactor when the server writes,
+    /// so this is an await on that task. A server that writes nothing
+    /// hangs the test, and the line below says what is waiting; a
+    /// deadline could not tell that apart from a loaded machine, and
+    /// guessing one is what `calls_across_two_providers` kept failing on
+    /// (bead mimid-67e0).
     pub async fn next(&mut self) -> Option<Msg> {
-        let mut line = String::new();
         eprintln!(
             "waiting for a line from the server; {} seen, last {:?}",
             self.seen.len(),
             self.seen.last().map(|m| m.command.clone())
         );
-        let read = self.read.read_line(&mut line).await.unwrap_or(0);
-        if read == 0 {
-            return None;
-        }
+        let line = self.lines.recv().await?;
         assert!(line.ends_with("\r\n"), "{line:?} ends with CR-LF");
         assert!(
             line.len() <= 512,
