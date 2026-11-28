@@ -1,0 +1,24 @@
+{
+  "id": "mimid-1wgh.139",
+  "title": "decision: why mimid speaks IRC, and what the alternatives cost",
+  "description": "Mark 2026-11-27: \"'it speaks irc' is guaranteed to raise eyebrows, i can follow with 'what chat protocol do you suggest then?'\". Nothing in the repository answered that question: no decision bead, and nothing in docs/design/agent-frontends.md. The defence existed only in conversation, which for the most eyebrow-raising fact about mimid is a gap.\n\nTHE QUESTION BEHIND THE EYEBROW is not whether IRC is a good protocol. It is which protocol a user can run today, unmodified, against an endpoint on their own machine. That needs four properties at once: clients the user already has, on every platform; serviceable from a local endpoint without implementing federation; no vendor who can withdraw it; and a wire format small enough that mimid owns its parser rather than depending on a library, which crate map rules require of the IRC front end anyway.\n\nWHAT THE ALTERNATIVES COST.\n\n- Matrix is federation. Serving it to a local client means implementing a homeserver, which is reimplementing what MIMI exists to replace.\n- XMPP is the honest second and has its own bead (mimid-wmdj). Fewer clients, an extension surface no smaller than IRCv3's, and its clients assume a federated account at a server rather than an agent on loopback.\n- Signal, WhatsApp and iMessage publish no client-facing protocol to speak.\n- Slack-shaped and Discord-shaped services are proprietary HTTP plus their own client.\n- JMAP Chat is mimid's default and the honest weakness of the set: a draft whose client population is approximately this project. INTERNAL ONLY. Never raise it with the MIMI working group (AGENTS.md).\n\nWHY A SECOND FRONT END AT ALL, which is the part that turns the objection around. mimid ships no UI (decision mimid-1wgh.38), and the architecture claims the agent's plaintext layer is front-end-neutral: neutral records in mimid-agent-store, each front end's own types confined to a record's ext map. One front end cannot demonstrate that claim, it can only assert it. Two can. IRC is the cheapest available second and also the most hostile, because its vocabulary resembles MIMI's nowhere, so anything leaking through the store's abstraction appears immediately as a thing IRC cannot say.\n\nIT HAS ALREADY PAID FOR ITSELF, and this is the answer with evidence rather than argument. The IRC front end answered a client's keepalive from the task that owned the connection, so it reported a healthy socket while the component serving ordinary requests was held for minutes; the client learned otherwise when its own request timed out. That is now Appendix A of the keepalive draft in bead mimid-f9x4 and the reason §4.2's rule about which component answers is a MUST, for every MIMI carrier. A 1993 protocol surfaced a liveness flaw in a 2026 design.\n\nA second dividend: IRC has three decades of hostile client behaviour and malformed input in the field, and mimid's rules demand strict decoding, named limits and hostile-input tests. The adversary comes free.\n\nWHAT IS GENUINELY WEAK, recorded so it is not discovered as a surprise. IRC has no identity model worth the name: a nick is not a user, which is why nicks and channel names live in ext[\"irc\"] and why epic mimid-1wgh.138 exists. No native multi-device, no edits or reactions without client tags, and casemapping is a minefield the front end owns. The defence is not that these do not exist but that each is documented and visible, and that the mimid service nick holds exactly those MIMI concepts IRC has no verb for.\n",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "decision",
+  "owner": "mark@reviewcommit.com",
+  "created_at": "2026-11-28T05:30:45.891262717Z",
+  "created_by": "Mark Atwood",
+  "updated_at": "2026-11-28T05:30:53.676422094Z",
+  "closed_at": "2026-11-28T05:30:53.676422094Z",
+  "close_reason": "Recorded, not open: this is the answer to a question that will be asked repeatedly, written down so it is not re-argued. The short form is that the field is empty — Matrix is federation, XMPP's clients assume a server account, and the rest publish no client protocol — and that a second front end is what turns front-end neutrality from a claim into a demonstration. The evidence is that IRC already found the liveness bug now justifying a MUST in the keepalive draft.",
+  "dependencies": [
+    {
+      "issue_id": "mimid-1wgh.139",
+      "depends_on_id": "mimid-1wgh",
+      "type": "parent-child",
+      "created_at": "2026-11-28T05:30:45.94506017Z",
+      "created_by": "Mark Atwood",
+      "metadata": "{}"
+    }
+  ]
+}
